@@ -95,11 +95,6 @@ thread_request_main :: proc(data: rawptr) {
 			#partial switch v in id_value {
 			case json.String:
 				id = v
-				//Hack to support dynamic registering without changing too much
-				if v == "REGISTER_DYNAMIC_CAPABILITIES" {
-					json.destroy_value(root)
-					continue
-				}
 			case json.Integer:
 				id = v
 			case:
@@ -107,9 +102,16 @@ thread_request_main :: proc(data: rawptr) {
 			}
 		}
 
+		method_value, has_method := root["method"]
+		if !has_method {
+			// Ignore responses to server-initiated client requests.
+			json.destroy_value(root)
+			continue
+		}
+
 		sync.mutex_lock(&requests_mutex)
 
-		method := root["method"].(json.String)
+		method := method_value.(json.String)
 
 		if method == "$/cancelRequest" {
 			append(&deletings, Request{id = id})
@@ -819,6 +821,12 @@ request_initialize :: proc(
 
 	send_response(response, writer)
 
+	progress_token :: "OLS_STARTUP_PROGRESS"
+	if initialize_params.capabilities.window.workDoneProgress {
+		startup_progress_create(progress_token, writer)
+		startup_progress_begin(progress_token, "Starting ols", "Resolving builtin packages", 0, writer)
+	}
+
 	/*
 		Add runtime package
 	*/
@@ -835,6 +843,10 @@ request_initialize :: proc(
 	// we still need to ensure the index is setup even if the builtin folder was not found
 	setup_index(builtin_path)
 
+	if initialize_params.capabilities.window.workDoneProgress {
+		startup_progress_report(progress_token, "Indexing builtin packages", 20, writer)
+	}
+
 	for pkg in indexer.builtin_packages {
 		try_build_package(pkg)
 	}
@@ -843,7 +855,15 @@ request_initialize :: proc(
 		register_dynamic_capabilities(writer)
 	}
 
+	if initialize_params.capabilities.window.workDoneProgress {
+		startup_progress_report(progress_token, "Scanning workspace packages", 70, writer)
+	}
+
 	find_all_package_aliases()
+
+	if initialize_params.capabilities.window.workDoneProgress {
+		startup_progress_end(progress_token, "Ready", writer)
+	}
 
 	return .None
 }
@@ -900,6 +920,66 @@ register_dynamic_capabilities :: proc(writer: ^Writer) {
 	}
 
 	send_request(request_message, writer)
+}
+
+startup_progress_create :: proc(token: string, writer: ^Writer) {
+	request := RequestMessage {
+		jsonrpc = "2.0",
+		method  = "window/workDoneProgress/create",
+		id      = "OLS_STARTUP_PROGRESS_CREATE",
+		params  = WorkDoneProgressCreateParams {token = token},
+	}
+	send_request(request, writer)
+}
+
+startup_progress_begin :: proc(token: string, title: string, message: string, percentage: int, writer: ^Writer) {
+	notification := Notification {
+		jsonrpc = "2.0",
+		method  = "$/progress",
+		params  = ProgressParams {
+			token = token,
+			value = WorkDoneProgressBegin {
+				kind        = "begin",
+				title       = title,
+				cancellable = false,
+				message     = message,
+				percentage  = percentage,
+			},
+		},
+	}
+	send_notification(notification, writer)
+}
+
+startup_progress_report :: proc(token: string, message: string, percentage: int, writer: ^Writer) {
+	notification := Notification {
+		jsonrpc = "2.0",
+		method  = "$/progress",
+		params  = ProgressParams {
+			token = token,
+			value = WorkDoneProgressReport {
+				kind        = "report",
+				cancellable = false,
+				message     = message,
+				percentage  = percentage,
+			},
+		},
+	}
+	send_notification(notification, writer)
+}
+
+startup_progress_end :: proc(token: string, message: string, writer: ^Writer) {
+	notification := Notification {
+		jsonrpc = "2.0",
+		method  = "$/progress",
+		params  = ProgressParams {
+			token = token,
+			value = WorkDoneProgressEnd {
+				kind    = "end",
+				message = message,
+			},
+		},
+	}
+	send_notification(notification, writer)
 }
 
 request_initialized :: proc(

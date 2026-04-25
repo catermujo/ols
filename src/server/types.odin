@@ -41,6 +41,7 @@ RequestMessage :: struct {
 	id:      RequestId,
 	params:  union {
 		RegistrationParams,
+		WorkDoneProgressCreateParams,
 	},
 }
 
@@ -74,6 +75,7 @@ NotificationPublishDiagnosticsParams :: struct {
 NotificationParams :: union {
 	NotificationLoggingParams,
 	NotificationPublishDiagnosticsParams,
+	ProgressParams,
 }
 
 Notification :: struct {
@@ -120,6 +122,10 @@ Registration :: struct {
 
 RegistrationParams :: struct {
 	registrations: []Registration,
+}
+
+WorkDoneProgressCreateParams :: struct {
+	token: string,
 }
 
 ClientInfo :: struct {
@@ -213,6 +219,10 @@ CompletionClientCapabilities :: struct {
 	completionItem:      CompletionItemCapabilities,
 }
 
+WindowClientCapabilities :: struct {
+	workDoneProgress: bool,
+}
+
 ParameterInformationCapabilities :: struct {
 	labelOffsetSupport: bool,
 }
@@ -221,6 +231,38 @@ ClientCapabilities :: struct {
 	textDocument: TextDocumentClientCapabilities,
 	general:      GeneralClientCapabilities,
 	workspace:    WorkspaceCapabilities,
+	window:       WindowClientCapabilities,
+}
+
+WorkDoneProgressBegin :: struct {
+	kind:        string,
+	title:       string,
+	cancellable: bool,
+	message:     string,
+	percentage:  int,
+}
+
+WorkDoneProgressReport :: struct {
+	kind:        string,
+	cancellable: bool,
+	message:     string,
+	percentage:  int,
+}
+
+WorkDoneProgressEnd :: struct {
+	kind:    string,
+	message: string,
+}
+
+ProgressValue :: union {
+	WorkDoneProgressBegin,
+	WorkDoneProgressReport,
+	WorkDoneProgressEnd,
+}
+
+ProgressParams :: struct {
+	token: string,
+	value: ProgressValue,
 }
 
 WorkspaceCapabilities :: struct {
