@@ -388,6 +388,29 @@ ast_goto_implicit_enum_infer_from_function :: proc(t: ^testing.T) {
 }
 
 @(test)
+ast_goto_implicit_enum_infer_from_proc_param_default :: proc(t: ^testing.T) {
+	source := test.Source {
+		main     = `package test
+		My_Enum :: enum {
+			One,
+			Two,
+			Three,
+			Four,
+		}
+
+		my_fn :: proc(my_enum: My_Enum = .Fo{*}ur) {}
+		`,
+		packages = {},
+	}
+
+	location := common.Location {
+		range = {start = {line = 5, character = 3}, end = {line = 5, character = 7}},
+	}
+
+	test.expect_definition_locations(t, &source, {location})
+}
+
+@(test)
 ast_goto_implicit_enum_infer_from_assignment_within_switch :: proc(t: ^testing.T) {
 	source := test.Source {
 		main     = `package test

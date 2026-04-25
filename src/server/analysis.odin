@@ -2813,6 +2813,17 @@ resolve_implicit_selector :: proc(
 		}
 	}
 
+	if position_context.function != nil &&
+	   position_context.function.type != nil &&
+	   position_context.function.type.params != nil &&
+	   position_in_node(position_context.function.type.params, position_context.position) {
+		if index, ok := find_position_in_field_list(position_context, position_context.function.type.params); ok {
+			if type, ok := get_field_list_type_at_index(position_context.function.type.params.list, index); ok {
+				return resolve_type_expression(ast_context, type)
+			}
+		}
+	}
+
 	if position_context.struct_type != nil {
 		st := position_context.struct_type
 		if position_in_node(st, position_context.position) {
