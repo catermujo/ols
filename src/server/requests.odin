@@ -821,10 +821,12 @@ request_initialize :: proc(
 
 	send_response(response, writer)
 
+	progress_setup(initialize_params.capabilities.window.workDoneProgress, writer)
+
 	progress_token :: "OLS_STARTUP_PROGRESS"
-	if initialize_params.capabilities.window.workDoneProgress {
-		startup_progress_create(progress_token, writer)
-		startup_progress_begin(progress_token, "Starting ols", "Resolving builtin packages", 0, writer)
+	if progress_available() {
+		progress_create(progress_token)
+		progress_begin(progress_token, "Starting ols", "Resolving builtin packages", 0)
 	}
 
 	/*
@@ -843,8 +845,8 @@ request_initialize :: proc(
 	// we still need to ensure the index is setup even if the builtin folder was not found
 	setup_index(builtin_path)
 
-	if initialize_params.capabilities.window.workDoneProgress {
-		startup_progress_report(progress_token, "Indexing builtin packages", 20, writer)
+	if progress_available() {
+		progress_report(progress_token, "Indexing builtin packages", 20)
 	}
 
 	for pkg in indexer.builtin_packages {
@@ -855,14 +857,14 @@ request_initialize :: proc(
 		register_dynamic_capabilities(writer)
 	}
 
-	if initialize_params.capabilities.window.workDoneProgress {
-		startup_progress_report(progress_token, "Scanning workspace packages", 70, writer)
+	if progress_available() {
+		progress_report(progress_token, "Scanning workspace packages", 70)
 	}
 
 	find_all_package_aliases()
 
-	if initialize_params.capabilities.window.workDoneProgress {
-		startup_progress_end(progress_token, "Ready", writer)
+	if progress_available() {
+		progress_end(progress_token, "Ready")
 	}
 
 	return .None
@@ -920,66 +922,6 @@ register_dynamic_capabilities :: proc(writer: ^Writer) {
 	}
 
 	send_request(request_message, writer)
-}
-
-startup_progress_create :: proc(token: string, writer: ^Writer) {
-	request := RequestMessage {
-		jsonrpc = "2.0",
-		method  = "window/workDoneProgress/create",
-		id      = "OLS_STARTUP_PROGRESS_CREATE",
-		params  = WorkDoneProgressCreateParams {token = token},
-	}
-	send_request(request, writer)
-}
-
-startup_progress_begin :: proc(token: string, title: string, message: string, percentage: int, writer: ^Writer) {
-	notification := Notification {
-		jsonrpc = "2.0",
-		method  = "$/progress",
-		params  = ProgressParams {
-			token = token,
-			value = WorkDoneProgressBegin {
-				kind        = "begin",
-				title       = title,
-				cancellable = false,
-				message     = message,
-				percentage  = percentage,
-			},
-		},
-	}
-	send_notification(notification, writer)
-}
-
-startup_progress_report :: proc(token: string, message: string, percentage: int, writer: ^Writer) {
-	notification := Notification {
-		jsonrpc = "2.0",
-		method  = "$/progress",
-		params  = ProgressParams {
-			token = token,
-			value = WorkDoneProgressReport {
-				kind        = "report",
-				cancellable = false,
-				message     = message,
-				percentage  = percentage,
-			},
-		},
-	}
-	send_notification(notification, writer)
-}
-
-startup_progress_end :: proc(token: string, message: string, writer: ^Writer) {
-	notification := Notification {
-		jsonrpc = "2.0",
-		method  = "$/progress",
-		params  = ProgressParams {
-			token = token,
-			value = WorkDoneProgressEnd {
-				kind    = "end",
-				message = message,
-			},
-		},
-	}
-	send_notification(notification, writer)
 }
 
 request_initialized :: proc(
@@ -1796,18 +1738,19 @@ notification_did_change_watched_files :: proc(
 		if change.type == cast(int)FileChangeType.Deleted {
 			if uri, ok := common.parse_uri(change.uri, context.temp_allocator); ok {
 				remove_index_file(uri)
+				pkg_dir := filepath.dir(uri.path)
+				if !package_dir_has_odin_files(pkg_dir) {
+					remove_package_alias_for_dir(pkg_dir)
+				}
 			}
-			clear_all_package_aliases()
-			find_all_package_aliases()
 		} else {
 			if uri, ok := common.parse_uri(change.uri, context.temp_allocator); ok {
 				if data, err := os.read_entire_file(uri.path, context.temp_allocator); err == nil {
 					index_file(uri, cast(string)data)
 				}
-			}
-			if change.type == cast(int)FileChangeType.Created {
-				clear_all_package_aliases()
-				find_all_package_aliases()
+				if change.type == cast(int)FileChangeType.Created {
+					add_package_alias_for_dir(filepath.dir(uri.path))
+				}
 			}
 		}
 	}

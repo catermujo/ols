@@ -238,20 +238,20 @@ WorkDoneProgressBegin :: struct {
 	kind:        string,
 	title:       string,
 	cancellable: bool,
-	message:     string,
-	percentage:  int,
+	message:     Maybe(string),
+	percentage:  Maybe(int),
 }
 
 WorkDoneProgressReport :: struct {
 	kind:        string,
 	cancellable: bool,
-	message:     string,
-	percentage:  int,
+	message:     Maybe(string),
+	percentage:  Maybe(int),
 }
 
 WorkDoneProgressEnd :: struct {
 	kind:    string,
-	message: string,
+	message: Maybe(string),
 }
 
 ProgressValue :: union {

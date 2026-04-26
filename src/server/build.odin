@@ -174,6 +174,12 @@ try_build_package :: proc(pkg_name: string) {
 		return
 	}
 
+	progress_token := progress_task_begin(
+		"OLS_INDEX_PACKAGE",
+		fmt.tprintf("Index package %s", filepath.base(pkg_name)),
+		pkg_name,
+	)
+
 	matches, err := filepath.glob(fmt.tprintf("%v/*.odin", pkg_name), context.temp_allocator)
 
 	if err != nil && err != .Not_Exist {
@@ -188,10 +194,22 @@ try_build_package :: proc(pkg_name: string) {
 	{
 		context.allocator = runtime.arena_allocator(&arena)
 
+		processed_files := 0
 		for fullpath in matches {
 			if skip_file(filepath.base(fullpath)) {
 				continue
 			}
+
+			processed_files += 1
+			percentage := 0
+			if len(matches) > 0 {
+				percentage = (processed_files * 100) / len(matches)
+			}
+			progress_report(
+				progress_token,
+				fmt.tprintf("%s (%s)", pkg_name, filepath.base(fullpath)),
+				percentage,
+			)
 
 			data, err := os.read_entire_file(fullpath, context.allocator)
 
@@ -245,6 +263,7 @@ try_build_package :: proc(pkg_name: string) {
 	build_cache.loaded_pkgs[strings.clone(pkg_name, indexer.index.collection.allocator)] = PackageCacheInfo {
 		timestamp = time.now(),
 	}
+	progress_end(progress_token, fmt.tprintf("Indexed %s", pkg_name))
 }
 
 
