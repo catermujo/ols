@@ -24,6 +24,10 @@ FileResolveCache :: struct {
 @(thread_local)
 file_resolve_cache: FileResolveCache
 
+clear_all_file_resolve_cache :: proc() {
+	clear(&file_resolve_cache.files)
+}
+
 resolve_entire_file_cached :: proc(document: ^Document) -> FileResolve {
 
 	file, cached := file_resolve_cache.files[document.uri.uri]
@@ -73,6 +77,7 @@ clear_all_package_aliases :: proc() {
 	}
 
 	clear(&build_cache.pkg_aliases)
+	reference_import_cache_reset()
 }
 
 package_alias_for_dir :: proc(collection_root, pkg_dir: string, allocator := context.temp_allocator) -> (string, bool) {
@@ -109,6 +114,10 @@ add_package_alias_for_dir :: proc(pkg_dir: string) -> bool {
 		}
 	}
 
+	if changed {
+		reference_import_cache_reset()
+	}
+
 	return changed
 }
 
@@ -143,6 +152,10 @@ remove_package_alias_for_dir :: proc(pkg_dir: string) -> bool {
 		} else {
 			build_cache.pkg_aliases[collection_name] = aliases
 		}
+	}
+
+	if changed {
+		reference_import_cache_reset()
 	}
 
 	return changed

@@ -1,6 +1,7 @@
 package tests
 
 import "core:log"
+import "core:slice"
 import "core:testing"
 
 import "src:common"
@@ -11,6 +12,7 @@ import test "src:testing"
 reset_reference_config :: proc() {
 	clear(&common.config.collections)
 	clear(&common.config.profile.exclude_path)
+	server.reference_import_cache_reset()
 }
 
 @(test)
@@ -112,6 +114,64 @@ reference_path_is_excluded_for_profile_excludes :: proc(t: ^testing.T) {
 
 	if server.reference_path_is_excluded("/repo/src/foo.odin") {
 		log.error(t, "unexpected exclude match outside excluded path")
+	}
+}
+
+@(test)
+reference_import_cache_tracks_importers_by_file :: proc(t: ^testing.T) {
+	defer reset_reference_config()
+
+	common.config.collections = make(map[string]string)
+	common.config.collections["studio"] = "/repo"
+	server.reference_import_cache.initialized = true
+
+	server.reference_import_cache_update_file(
+		"/repo/app/main.odin",
+		`package app
+		import drift "studio:rt/drift"
+		import "../shared/math"
+		`,
+	)
+
+	importers := server.reference_import_cache.importers_by_package["/repo/rt/drift"]
+	if !slice.contains(importers[:], "/repo/app/main.odin") {
+		log.error(t, "missing cached importer for collection import")
+	}
+
+	relative_importers := server.reference_import_cache.importers_by_package["/repo/shared/math"]
+	if !slice.contains(relative_importers[:], "/repo/app/main.odin") {
+		log.error(t, "missing cached importer for relative import")
+	}
+
+	package_files := server.reference_import_cache.package_files["/repo/app"]
+	if !slice.contains(package_files[:], "/repo/app/main.odin") {
+		log.error(t, "missing cached package file")
+	}
+}
+
+@(test)
+reference_import_cache_removes_deleted_file :: proc(t: ^testing.T) {
+	defer reset_reference_config()
+
+	common.config.collections = make(map[string]string)
+	common.config.collections["studio"] = "/repo"
+	server.reference_import_cache.initialized = true
+
+	server.reference_import_cache_update_file(
+		"/repo/app/main.odin",
+		`package app
+		import drift "studio:rt/drift"
+		`,
+	)
+
+	server.reference_import_cache_remove_file("/repo/app/main.odin")
+
+	if files, ok := server.reference_import_cache.importers_by_package["/repo/rt/drift"]; ok && len(files) > 0 {
+		log.error(t, "expected importer entry to be removed")
+	}
+
+	if files, ok := server.reference_import_cache.package_files["/repo/app"]; ok && len(files) > 0 {
+		log.error(t, "expected package file entry to be removed")
 	}
 }
 
