@@ -1,10 +1,119 @@
 package tests
 
+import "core:log"
 import "core:testing"
 
 import "src:common"
+import "src:server"
 
 import test "src:testing"
+
+reset_reference_config :: proc() {
+	clear(&common.config.collections)
+	clear(&common.config.profile.exclude_path)
+}
+
+@(test)
+reference_source_may_reference_package_same_package :: proc(t: ^testing.T) {
+	defer reset_reference_config()
+
+	ok := server.source_may_reference_package(
+		"/repo/foo/main.odin",
+		"/repo/foo",
+		`package foo
+		main :: proc() {
+			Change_Me()
+		}
+		`,
+	)
+
+	if !ok {
+		log.error(t, "expected same-package reference candidate")
+	}
+}
+
+@(test)
+reference_source_may_reference_package_relative_import :: proc(t: ^testing.T) {
+	defer reset_reference_config()
+
+	ok := server.source_may_reference_package(
+		"/repo/app/main.odin",
+		"/repo/lib/math",
+		`package app
+		import "../lib/./math"
+
+		main :: proc() {
+			math.Change_Me()
+		}
+		`,
+	)
+
+	if !ok {
+		log.error(t, "expected relative import reference candidate")
+	}
+}
+
+@(test)
+reference_source_may_reference_package_collection_import :: proc(t: ^testing.T) {
+	defer reset_reference_config()
+
+	common.config.collections = make(map[string]string)
+	common.config.collections["studio"] = "/repo"
+
+	ok := server.source_may_reference_package(
+		"/repo/app/main.odin",
+		"/repo/rt/drift",
+		`package app
+		import drift "studio:rt/drift"
+
+		main :: proc() {
+			drift.Change_Me()
+		}
+		`,
+	)
+
+	if !ok {
+		log.error(t, "expected collection import reference candidate")
+	}
+}
+
+@(test)
+reference_source_may_not_reference_unimported_package :: proc(t: ^testing.T) {
+	defer reset_reference_config()
+
+	common.config.collections = make(map[string]string)
+	common.config.collections["studio"] = "/repo"
+
+	ok := server.source_may_reference_package(
+		"/repo/app/main.odin",
+		"/repo/rt/drift",
+		`package app
+		main :: proc() {
+			Change_Me()
+		}
+		`,
+	)
+
+	if ok {
+		log.error(t, "unexpected reference candidate without matching import")
+	}
+}
+
+@(test)
+reference_path_is_excluded_for_profile_excludes :: proc(t: ^testing.T) {
+	defer reset_reference_config()
+
+	common.config.profile.exclude_path = make([dynamic]string)
+	append(&common.config.profile.exclude_path, "/repo/.emcache/**")
+
+	if !server.reference_path_is_excluded("/repo/.emcache/cache/foo.odin") {
+		log.error(t, "expected excluded path to match")
+	}
+
+	if server.reference_path_is_excluded("/repo/src/foo.odin") {
+		log.error(t, "unexpected exclude match outside excluded path")
+	}
+}
 
 @(test)
 reference_enum_value_initialize_rhs :: proc(t: ^testing.T) {
