@@ -568,6 +568,38 @@ ast_goto_struct_field_from_proc :: proc (t: ^testing.T) {
 }
 
 @(test)
+ast_goto_nested_struct_field_selector_definition :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+
+		Clock :: struct {
+			now: int,
+		}
+
+		Sim :: struct {
+			cal: Clock,
+		}
+
+		GUI :: struct {
+			sim: Sim,
+		}
+
+		g: GUI
+
+		main :: proc() {
+			_ = g.sim.cal.no{*}w
+		}
+		`,
+	}
+
+	location := common.Location {
+		range = {start = {line = 3, character = 3}, end = {line = 3, character = 6}},
+	}
+
+	test.expect_definition_locations(t, &source, {location})
+}
+
+@(test)
 ast_goto_proc_named_param :: proc (t: ^testing.T) {
 	source := test.Source {
 		main     = `package test
