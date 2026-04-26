@@ -2,6 +2,7 @@ package server
 
 import "base:runtime"
 
+import "core:fmt"
 import "core:log"
 import "core:mem"
 import "core:odin/ast"
@@ -13,6 +14,123 @@ import "core:slice"
 import "core:strings"
 
 import "src:common"
+
+reference_dir_blacklist :: []string{"node_modules", ".git"}
+
+reference_path_is_excluded :: proc(fullpath: string) -> bool {
+	forward_path, _ := filepath.replace_separators(fullpath, '/', context.temp_allocator)
+	lower_path := strings.to_lower(forward_path)
+
+	for exclude_path in common.config.profile.exclude_path {
+		exclude_forward, _ := filepath.replace_separators(exclude_path, '/', context.temp_allocator)
+		lower_exclude := strings.to_lower(exclude_forward)
+
+		if strings.has_suffix(lower_exclude, "/**") {
+			prefix := lower_exclude[:len(lower_exclude) - 3]
+			if lower_path == prefix ||
+			   (strings.has_prefix(lower_path, prefix) &&
+			    len(lower_path) > len(prefix) &&
+			    lower_path[len(prefix)] == '/') {
+				return true
+			}
+		} else if lower_path == lower_exclude {
+			return true
+		}
+	}
+
+	return false
+}
+
+reference_should_skip_dir :: proc(fullpath: string) -> bool {
+	forward_path, _ := filepath.replace_separators(fullpath, '/', context.temp_allocator)
+	dir_name := filepath.base(forward_path)
+
+	for blacklist in reference_dir_blacklist {
+		if blacklist == dir_name {
+			return true
+		}
+	}
+
+	return reference_path_is_excluded(forward_path)
+}
+
+add_reference_candidate_path :: proc(paths: ^map[string]struct{}, fullpath: string) {
+	forward_path, _ := filepath.replace_separators(fullpath, '/', context.temp_allocator)
+	if _, exists := paths[forward_path]; exists {
+		return
+	}
+
+	paths[strings.clone(forward_path, context.temp_allocator)] = {}
+}
+
+collect_reference_package_files :: proc(pkg_name: string, paths: ^map[string]struct{}) {
+	matches, err := filepath.glob(fmt.tprintf("%s/*.odin", pkg_name), context.temp_allocator)
+	if err != nil && err != .Not_Exist {
+		return
+	}
+
+	for fullpath in matches {
+		add_reference_candidate_path(paths, fullpath)
+	}
+}
+
+reference_import_path_matches_package :: proc(file_dir, pkg_name, import_path: string) -> bool {
+	if i := strings.index(import_path, ":"); i != -1 && i > 0 && i < len(import_path) - 1 {
+		collection := import_path[:i]
+		p := import_path[i + 1:]
+
+		dir, ok := common.config.collections[collection]
+		if !ok {
+			return false
+		}
+
+		full := path.join(elems = {dir, p}, allocator = context.temp_allocator)
+		full = path.clean(full, context.temp_allocator)
+		forward_full, _ := filepath.replace_separators(full, '/', context.temp_allocator)
+		return strings.equal_fold(forward_full, pkg_name)
+	}
+
+	full := path.join(elems = {file_dir, import_path}, allocator = context.temp_allocator)
+	full = path.clean(full, context.temp_allocator)
+	forward_full, _ := filepath.replace_separators(full, '/', context.temp_allocator)
+	return strings.equal_fold(forward_full, pkg_name)
+}
+
+source_may_reference_package :: proc(fullpath, pkg_name, src: string) -> bool {
+	if is_builtin_pkg(pkg_name) {
+		return true
+	}
+
+	file_dir := filepath.dir(fullpath)
+	forward_dir, _ := filepath.replace_separators(file_dir, '/', context.temp_allocator)
+	forward_pkg, _ := filepath.replace_separators(pkg_name, '/', context.temp_allocator)
+
+	if strings.equal_fold(forward_dir, forward_pkg) {
+		return true
+	}
+
+	for i := 0; i < len(src); i += 1 {
+		if src[i] != '"' {
+			continue
+		}
+
+		end := i + 1
+		for ; end < len(src) && src[end] != '"'; end += 1 {
+		}
+
+		if end >= len(src) {
+			break
+		}
+
+		if reference_import_path_matches_package(forward_dir, forward_pkg, src[i + 1:end]) {
+			return true
+		}
+
+		i = end
+	}
+
+	return false
+}
 
 prepare_references :: proc(
 	document: ^Document,
@@ -279,13 +397,25 @@ resolve_references :: proc(
 		return locations[:], true
 	}
 
+	candidate_paths := make(map[string]struct{}, 0, context.temp_allocator)
+	if !is_builtin_pkg(symbol.pkg) {
+		collect_reference_package_files(symbol.pkg, &candidate_paths)
+	}
+
 	when !ODIN_TEST {
+		scan_arena: runtime.Arena
+		_ = runtime.arena_init(&scan_arena, mem.Megabyte * 2, runtime.default_allocator())
+		defer runtime.arena_destroy(&scan_arena)
+
 		for workspace in common.config.workspace_folders {
 			uri, _ := common.parse_uri(workspace.uri, context.temp_allocator)
 			w := os.walker_create(uri.path)
 			defer os.walker_destroy(&w)
 			for info in os.walker_walk(&w) {
 				if info.type == .Directory {
+					if reference_should_skip_dir(info.fullpath) {
+						os.walker_skip_dir(&w)
+					}
 					continue
 				}
 
@@ -295,11 +425,37 @@ resolve_references :: proc(
 
 				if strings.has_suffix(info.name, ".odin") {
 					slash_path, _ := filepath.replace_separators(info.fullpath, '/', context.temp_allocator)
-					if !strings.equal_fold(slash_path, document.fullpath) {
-						append(&fullpaths, strings.clone(info.fullpath, context.temp_allocator))
+					if strings.equal_fold(slash_path, document.fullpath) {
+						continue
+					}
+
+					if _, exists := candidate_paths[slash_path]; exists {
+						continue
+					}
+
+					runtime.arena_free_all(&scan_arena)
+					scan_allocator := runtime.arena_allocator(&scan_arena)
+					data, err := os.read_entire_file(info.fullpath, scan_allocator)
+					if err != nil {
+						log.errorf("failed to read entire file for references %v: %v", info.fullpath, err)
+						continue
+					}
+
+					if target_name != "" && !strings.contains(string(data), target_name) {
+						continue
+					}
+
+					if source_may_reference_package(info.fullpath, symbol.pkg, string(data)) {
+						add_reference_candidate_path(&candidate_paths, info.fullpath)
 					}
 				}
 			}
+		}
+	}
+
+	for fullpath in candidate_paths {
+		if !strings.equal_fold(fullpath, document.fullpath) {
+			append(&fullpaths, strings.clone(fullpath, ast_context.allocator))
 		}
 	}
 
