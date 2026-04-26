@@ -298,6 +298,9 @@ remove_index_file :: proc(uri: common.Uri) -> common.Error {
 		delete_key(&v.comment, corrected_uri.uri)
 	}
 
+	clear_all_file_resolve_cache()
+	reference_import_cache_remove_file(fullpath)
+
 	return .None
 }
 
@@ -373,6 +376,9 @@ index_file :: proc(uri: common.Uri, text: string) -> common.Error {
 	if ret := collect_symbols(&indexer.index.collection, file, corrected_uri.uri); ret != .None {
 		log.errorf("failed to collect symbols on save %v", ret)
 	}
+
+	clear_all_file_resolve_cache()
+	reference_import_cache_update_file(fullpath, text)
 
 	return .None
 }

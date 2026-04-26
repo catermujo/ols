@@ -1203,13 +1203,31 @@ notification_did_change :: proc(
 		return .ParseError
 	}
 
-	document_apply_changes(
+	if result := document_apply_changes(
 		change_params.textDocument.uri,
 		change_params.contentChanges,
 		change_params.textDocument.version,
 		config,
 		writer,
-	)
+	); result != .None {
+		return result
+	}
+
+	uri, parsed_ok := common.parse_uri(change_params.textDocument.uri, context.temp_allocator)
+	if !parsed_ok {
+		return .ParseError
+	}
+
+	document := &document_storage.documents[uri.path]
+	if document == nil {
+		return .InternalError
+	}
+
+	if document.ast.syntax_error_count == 0 {
+		if result := index_file(document.uri, string(document.text[:document.used_text])); result != .None {
+			return result
+		}
+	}
 
 	return .None
 }
