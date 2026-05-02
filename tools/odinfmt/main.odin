@@ -16,6 +16,51 @@ Args :: struct {
 	stdin:  bool `usage:"formats code from standard input"`,
 	path:   string `args:"pos=0" usage:"set the file or directory to format"`,
 	config: string `usage:"path to a config file"`,
+	exclude_dirs: string `usage:"comma-separated directory names to skip when formatting directories recursively"`,
+}
+
+default_skip_dirs :: []string{
+	".git",
+	".jj",
+	".hg",
+	".svn",
+	".emcache",
+	".venv",
+	"__pycache__",
+	"node_modules",
+	"build",
+	"dist",
+	"out",
+	"vendor",
+}
+
+make_skip_dir_set :: proc(extra_dirs: string) -> map[string]struct{} {
+	skip_dirs := make(map[string]struct{}, context.temp_allocator)
+
+	for dir in default_skip_dirs {
+		skip_dirs[dir] = {}
+	}
+
+	if extra_dirs != "" {
+		extra, _ := strings.split(extra_dirs, ",", context.temp_allocator)
+		for dir in extra {
+			trimmed := strings.trim_space(dir)
+			if trimmed == "" {
+				continue
+			}
+
+			skip_dirs[strings.clone(trimmed, context.temp_allocator)] = {}
+		}
+	}
+
+	return skip_dirs
+}
+
+should_skip_directory :: proc(fullpath: string, skip_dirs: map[string]struct{}) -> bool {
+	path, _ := filepath.replace_separators(fullpath, '/', context.temp_allocator)
+	dir_name := filepath.base(path)
+	_, should_skip := skip_dirs[dir_name]
+	return should_skip
 }
 
 format_file :: proc(
@@ -115,11 +160,15 @@ main :: proc() {
 			}
 		}
 	} else if os.is_dir(args.path) {
-		files: [dynamic]string
+		skip_dirs := make_skip_dir_set(args.exclude_dirs)
+		files_formatted := 0
 		w := os.walker_create(args.path)
 		defer os.walker_destroy(&w)
 		for info in os.walker_walk(&w) {
 			if info.type == .Directory {
+				if should_skip_directory(info.fullpath, skip_dirs) {
+					os.walker_skip_dir(&w)
+				}
 				continue
 			}
 
@@ -127,22 +176,19 @@ main :: proc() {
 				continue
 			}
 
-			append(&files, strings.clone(info.fullpath))
-		}
-
-		for file in files {
+			file := info.fullpath
+			files_formatted += 1
 			fmt.println(file)
-
-			backup_path := strings.concatenate({file, "_bk"})
-			defer delete(backup_path)
 
 			if data, ok := format_file(file, config, arena_allocator); ok {
 				if args.write {
+					backup_path := strings.concatenate({file, "_bk"})
 					os.rename(file, backup_path)
 
 					if err := os.write_entire_file(file, transmute([]byte)data); err == nil {
 						os.remove(backup_path)
 					}
+					delete(backup_path)
 				} else {
 					fmt.println(data)
 				}
@@ -158,7 +204,7 @@ main :: proc() {
 
 		fmt.printf(
 			"Formatted %v files in %vms \n",
-			len(files),
+			files_formatted,
 			time.duration_milliseconds(time.tick_lap_time(&tick_time)),
 		)
 		fmt.printf("Peak memory used: %v \n", watermark / mem.Megabyte)
