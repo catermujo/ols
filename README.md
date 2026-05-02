@@ -179,6 +179,11 @@ Options:
 
 - `align_struct_values`: Align the values of struct fields when assigning a struct value to a variable so they all start at the same column.
 
+When formatting a directory, `odinfmt` now skips these directory names by default:
+`.git`, `.jj`, `.hg`, `.svn`, `.emcache`, `.venv`, `__pycache__`, `node_modules`, `build`, `dist`, `out`, `vendor`.
+
+Use `-exclude-dirs:<dir1,dir2,...>` to add more directory names to skip during recursive formatting.
+
 ## Features
 
 Support Language server features:
