@@ -1800,9 +1800,15 @@ notification_workspace_did_change_configuration :: proc(
 
 	ols_config := workspace_config_params.settings
 
-	if uri, ok := common.parse_uri(config.workspace_folders[0].uri, context.temp_allocator); ok {
-		read_ols_initialize_options(config, ols_config, uri)
+	workspace_uri := common.Uri{}
+	if len(config.workspace_folders) > 0 {
+		if uri, ok := common.parse_uri(config.workspace_folders[0].uri, context.temp_allocator); ok {
+			workspace_uri = uri
+		}
 	}
+
+	read_ols_initialize_options(config, ols_config, workspace_uri)
+
 	if config.enable_checker_workspace_diagnostics {
 		queue_check_request(.Workspace, {}, config)
 	}

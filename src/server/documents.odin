@@ -211,12 +211,12 @@ document_apply_changes :: proc(
 
 	document := &document_storage.documents[uri.path]
 
-	document.version = version
-
-	if !document.client_owned {
-		log.errorf("Client called change on an document not opened: %v ", document.uri.path)
+	if document == nil || !document.client_owned {
+		log.errorf("Client called change on a document that was never opened: %v", uri.path)
 		return .InvalidRequest
 	}
+
+	document.version = version
 
 	for change in changes {
 		//for some reason sublime doesn't seem to care even if i tell it to do incremental sync
