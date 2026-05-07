@@ -53,11 +53,44 @@ Checker :: struct {
 @(private = "file")
 checker: Checker
 
+@(private = "file")
+check_enqueue_count: int
+
+@(private = "file")
+check_mode_to_string :: proc(mode: Check_Mode) -> string {
+	switch mode {
+	case .Saved:
+		return "saved"
+	case .Workspace:
+		return "workspace"
+	}
+
+	return "unknown"
+}
+
 queue_check_request :: proc(mode: Check_Mode, path: string, config: ^common.Config) {
+	check_enqueue_count += 1
+	enqueue_count := check_enqueue_count
+	if common.config.verbose {
+		log.infof(
+			"check queue enqueue #%v mode=%s path=%q",
+			enqueue_count,
+			check_mode_to_string(mode),
+			path,
+		)
+	}
+
 	path := strings.clone(path, checker.allocator)
-	ok := chan.send(checker.send, Check_Request{check_mode = mode, path = path, config = config})
+	ok := chan.try_send(checker.send, Check_Request{check_mode = mode, path = path, config = config})
 	if !ok {
-		log.errorf("Failed to queue check request for path %q", path)
+		delete(path, checker.allocator)
+		if common.config.verbose {
+			log.warnf(
+				"Dropped check request #%v mode=%s because check queue is full",
+				enqueue_count,
+				check_mode_to_string(mode),
+			)
+		}
 	}
 }
 
@@ -93,11 +126,23 @@ run_check_consumer :: proc(c: Consumer) {
 		if !ok {
 			break
 		}
+
 		paths := make([dynamic]string, allocator = context.temp_allocator)
 		append(&paths, request.path)
+
 		for request in chan.try_recv(c.ch) {
 			append(&paths, request.path)
 		}
+
+		if common.config.verbose {
+			log.infof(
+				"check consumer batch: mode=%s requests=%v first_path=%q",
+				check_mode_to_string(request.check_mode),
+				len(paths),
+				request.path,
+			)
+		}
+
 		check(request.check_mode, paths[:], request.config)
 		push_diagnostics(c.w)
 		for path in paths {
@@ -187,10 +232,27 @@ CheckProcess :: struct {
 }
 
 check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config) {
+	check_start := time.now()
 	paths := resolve_check_paths(mode, check_paths, config)
 
 	if len(paths) == 0 {
+		if common.config.verbose {
+			log.infof(
+				"check skipped: mode=%s input_paths=%v resolved_paths=0",
+				check_mode_to_string(mode),
+				len(check_paths),
+			)
+		}
 		return
+	}
+
+	if common.config.verbose {
+		log.infof(
+			"check start: mode=%s input_paths=%v resolved_paths=%v",
+			check_mode_to_string(mode),
+			len(check_paths),
+			len(paths),
+		)
 	}
 
 	clear_diagnostics(.Check)
@@ -212,19 +274,31 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config) {
 	next_index := 0
 	running_count := 0
 	start := time.now()
+	timed_out := false
 
 	for running_count > 0 || next_index < len(paths) {
 		for running_count < max_concurrent_checks && next_index < len(paths) {
-			p, ok := start_check_process(paths[next_index], collections[:], config)
+			check_path := paths[next_index]
+			p, ok := start_check_process(check_path, collections[:], config)
 			next_index += 1
 			if !ok {
 				continue
 			}
 			append(&processes, p)
 			running_count += 1
+			if common.config.verbose {
+				log.infof(
+					"check process started: mode=%s path=%q running=%v max=%v",
+					check_mode_to_string(mode),
+					check_path,
+					running_count,
+					max_concurrent_checks,
+				)
+			}
 		}
 
 		if time.since(start) > 20 * time.Second {
+			timed_out = true
 			log.error("`odin check` timed out")
 			for &p in processes {
 				if !p.finished {
@@ -356,7 +430,17 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config) {
 				},
 			)
 		}
+	}
 
+	if common.config.verbose {
+		log.infof(
+			"check done: mode=%s resolved_paths=%v diagnostics=%v timed_out=%v elapsed_ms=%v",
+			check_mode_to_string(mode),
+			len(paths),
+			len(diagnostics),
+			timed_out,
+			time.duration_milliseconds(time.since(check_start)),
+		)
 	}
 
 }
