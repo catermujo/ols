@@ -540,6 +540,76 @@ expect_prepare_rename_range :: proc(t: ^testing.T, src: ^Source, expect_range: c
 	}
 }
 
+expect_rename_locations :: proc(
+	t: ^testing.T,
+	src: ^Source,
+	new_name: string,
+	expect_locations: []common.Location,
+	expect_excluded: []common.Location = nil,
+) {
+	setup(src)
+	defer teardown(src)
+
+	edit, ok := server.get_rename(src.document, new_name, src.position)
+	if !ok {
+		log.error("Failed to get rename edits")
+		return
+	}
+
+	locations := make([dynamic]common.Location, context.temp_allocator)
+	for uri, edits in edit.changes {
+		for e in edits {
+			if e.newText != new_name {
+				log.errorf("Expected edit text %q, but received %q", new_name, e.newText)
+			}
+			append(&locations, common.Location{range = e.range, uri = uri})
+		}
+	}
+
+	if len(locations) != len(expect_locations) {
+		ok = false
+		log.errorf("Expected %d rename edits, but received %d", len(expect_locations), len(locations))
+	}
+
+	for expect_location in expect_locations {
+		match := false
+		for location in locations {
+			if expect_location.uri != "" {
+				if location.range == expect_location.range && location.uri == expect_location.uri {
+					match = true
+					break
+				}
+			} else if location.range == expect_location.range {
+				match = true
+				break
+			}
+		}
+		if !match {
+			ok = false
+			log.errorf("Failed to match with location: %v", expect_location)
+		}
+	}
+
+	for expect_exclude in expect_excluded {
+		for location in locations {
+			if expect_exclude.uri != "" {
+				if expect_exclude.range == location.range && expect_exclude.uri == location.uri {
+					log.errorf("Expected location %v to not be included\n", expect_exclude)
+				}
+			} else if expect_exclude.range == location.range {
+				log.errorf("Expected location %v to not be included\n", expect_exclude)
+			}
+		}
+	}
+
+	if !ok {
+		log.error("Received:")
+		for location in locations {
+			log.errorf("%v \n", location)
+		}
+	}
+}
+
 
 expect_action :: proc(t: ^testing.T, src: ^Source, expect_action_names: []string) {
 	setup(src)
