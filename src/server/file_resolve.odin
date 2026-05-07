@@ -303,13 +303,17 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 
 		get_locals_proc_param_and_results(data.ast_context.file, n^, data.ast_context, data.position_context)
 
+		old_function := data.position_context.function
+		data.position_context.function = cast(^ast.Proc_Lit)node
+		defer {
+			data.position_context.function = old_function
+		}
+
 		resolve_node(n.type, data)
 
 		for clause in n.where_clauses {
 			resolve_node(clause, data)
 		}
-
-		data.position_context.function = cast(^ast.Proc_Lit)node
 
 		append(&data.position_context.functions, data.position_context.function)
 

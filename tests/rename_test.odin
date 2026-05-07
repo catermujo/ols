@@ -322,3 +322,189 @@ ast_prepare_rename_struct_field_bit_set :: proc(t: ^testing.T) {
 	range := common.Range{start = {line = 8, character = 17}, end = {line = 8, character = 20}}
 	test.expect_prepare_rename_range(t, &source, range)
 }
+
+@(test)
+ast_rename_enum_variant_nested_with_switch :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+
+		Foo :: enum {
+			A{*},
+			B,
+		}
+
+		foo :: proc() -> Foo {
+			f := Foo.A
+			switch f {
+			case .A:
+				return .B
+			case .B
+				return .A
+			}
+		}
+		`,
+	}
+
+	locations := []common.Location {
+		{range = {start = {line = 3, character = 3}, end = {line = 3, character = 4}}},
+		{range = {start = {line = 8, character = 12}, end = {line = 8, character = 13}}},
+		{range = {start = {line = 10, character = 9}, end = {line = 10, character = 10}}},
+		{range = {start = {line = 13, character = 12}, end = {line = 13, character = 13}}},
+	}
+
+	test.expect_rename_locations(t, &source, "Renamed", locations[:])
+}
+
+@(test)
+ast_rename_enum_variant_same_name_other_enum :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+
+		Foo :: enum {
+			A{*},
+		}
+
+		Bar :: enum {
+			A,
+		}
+
+		main :: proc() {
+			foo: Foo
+			bar: Bar
+			foo = .A
+			bar = .A
+		}
+		`,
+	}
+
+	locations := []common.Location {
+		{range = {start = {line = 3, character = 3}, end = {line = 3, character = 4}}},
+		{range = {start = {line = 13, character = 10}, end = {line = 13, character = 11}}},
+	}
+	excluded := []common.Location {
+		{range = {start = {line = 7, character = 3}, end = {line = 7, character = 4}}},
+		{range = {start = {line = 14, character = 10}, end = {line = 14, character = 11}}},
+	}
+
+	test.expect_rename_locations(t, &source, "Renamed", locations[:], excluded)
+}
+
+@(test)
+ast_rename_enum_variant_infer_from_union_assignment :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+		Sub_Enum1 :: enum {
+			ONE,
+		}
+		Sub_Enum2 :: enum {
+			TWO,
+		}
+
+		Super_Enum :: union {
+			Sub_Enum1,
+			Sub_Enum2,
+		}
+
+		main :: proc() {
+			my_enum: Super_Enum
+			my_enum = .ON{*}E
+		}
+		`,
+	}
+
+	locations := []common.Location {
+		{range = {start = {line = 2, character = 3}, end = {line = 2, character = 6}}},
+		{range = {start = {line = 15, character = 14}, end = {line = 15, character = 17}}},
+	}
+
+	test.expect_rename_locations(t, &source, "RENAMED_ONE", locations[:])
+}
+
+@(test)
+ast_rename_struct_and_enum_variant_same_name :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+
+		Foo :: enum {
+			Bar,
+			Bazz
+		}
+
+		Bar :: struct {}
+
+		main :: proc() {
+			f: Foo
+			f = .Ba{*}r
+			b := Bar{}
+		}
+		`,
+	}
+
+	locations := []common.Location {
+		{range = {start = {line = 3, character = 3}, end = {line = 3, character = 6}}},
+		{range = {start = {line = 11, character = 8}, end = {line = 11, character = 11}}},
+	}
+	excluded := []common.Location {
+		{range = {start = {line = 7, character = 2}, end = {line = 7, character = 5}}},
+		{range = {start = {line = 12, character = 8}, end = {line = 12, character = 11}}},
+	}
+
+	test.expect_rename_locations(t, &source, "RenamedBar", locations[:], excluded)
+}
+
+@(test)
+ast_rename_enum_variant_enumerated_array :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+
+		Foo :: enum {
+			A,
+			B,
+		}
+
+		main :: proc() {
+			foos := [Foo][Foo][Foo][Foo]Foo {
+				.A = {
+					.B = {
+						.A = {
+							.A{*} = .B
+						}
+					}
+				}
+			}
+		}
+		`,
+	}
+
+	locations := []common.Location {
+		{range = {start = {line = 3, character = 3}, end = {line = 3, character = 4}}},
+		{range = {start = {line = 9, character = 5}, end = {line = 9, character = 6}}},
+		{range = {start = {line = 11, character = 7}, end = {line = 11, character = 8}}},
+		{range = {start = {line = 12, character = 8}, end = {line = 12, character = 9}}},
+	}
+
+	test.expect_rename_locations(t, &source, "RenamedA", locations[:])
+}
+
+@(test)
+ast_rename_implicit_enum_infer_from_proc_param_default :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+		My_Enum :: enum {
+			One,
+			Two,
+			Three,
+			Four,
+		}
+
+		my_fn :: proc(my_enum: My_Enum = .Fo{*}ur) {}
+		`,
+	}
+
+	locations := []common.Location {
+		{range = {start = {line = 5, character = 3}, end = {line = 5, character = 7}}},
+		{range = {start = {line = 8, character = 36}, end = {line = 8, character = 40}}},
+	}
+
+	test.expect_rename_locations(t, &source, "RenamedFour", locations[:])
+}
