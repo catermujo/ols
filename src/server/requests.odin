@@ -60,6 +60,8 @@ requests_mutex: sync.Mutex
 requests: [dynamic]Request
 deletings: [dynamic]Request
 
+SLOW_REQUEST_THRESHOLD_MS :: 200
+
 thread_request_main :: proc(data: rawptr) {
 	request_data := cast(^RequestThreadData)data
 
@@ -294,6 +296,10 @@ consume_requests :: proc(config: ^common.Config, writer: ^Writer) -> bool {
 		append(&temp_requests, request)
 	}
 
+	if config.verbose && len(temp_requests) >= 8 {
+		log.infof("request batch: processing=%v queued=%v", len(temp_requests), len(requests))
+	}
+
 	sync.mutex_unlock(&requests_mutex)
 
 	request_index := 0
@@ -368,7 +374,17 @@ call :: proc(value: json.Value, id: RequestId, writer: ^Writer, config: ^common.
 		}
 	}
 
-	//log.errorf("time duration %v for %v", time.duration_milliseconds(diff), method)
+	duration_ms := time.duration_milliseconds(diff)
+	should_trace := config.verbose && method == "workspace/symbol"
+
+	if duration_ms >= SLOW_REQUEST_THRESHOLD_MS || should_trace {
+		log.infof(
+			"request trace: method=%q id=%v duration_ms=%v",
+			method,
+			id,
+			duration_ms,
+		)
+	}
 }
 
 read_ols_initialize_options :: proc(config: ^common.Config, ols_config: OlsConfig, uri: common.Uri) {
