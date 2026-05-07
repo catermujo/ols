@@ -2,6 +2,7 @@ package server
 
 import "core:slice"
 import "core:fmt"
+import "core:log"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
@@ -20,7 +21,17 @@ WorkspaceCache :: struct {
 cache: WorkspaceCache
 
 get_workspace_symbols :: proc(query: string) -> (workspace_symbols: []WorkspaceSymbol, ok: bool) {
+	cache_rebuilt := false
+
 	if time.since(cache.time) > 20 * time.Second {
+		cache_rebuilt = true
+		rebuild_start := time.now()
+		scanned_dirs := 0
+		candidate_dirs := 0
+		odin_dirs := 0
+		excluded_dirs := 0
+		built_packages := 0
+
 		for pkg in cache.pkgs {
 			delete(pkg)
 		}
@@ -34,12 +45,14 @@ get_workspace_symbols :: proc(query: string) -> (workspace_symbols: []WorkspaceS
 			defer os.walker_destroy(&w)
 			for info in os.walker_walk(&w) {
 				if info.type == .Directory {
+					scanned_dirs += 1
 					dir, _ := filepath.replace_separators(info.fullpath, '/', context.temp_allocator)
 					dir_name := filepath.base(dir)
 					if slice.contains(dir_blacklist, dir_name) {
 						os.walker_skip_dir(&w)
 					} else {
 						append(&pkgs, dir)
+						candidate_dirs += 1
 					}
 				}
 			}
@@ -50,6 +63,7 @@ get_workspace_symbols :: proc(query: string) -> (workspace_symbols: []WorkspaceS
 				if len(matches) == 0 {
 					continue
 				}
+				odin_dirs += 1
 
 				for exclude_path in common.config.profile.exclude_path {
 					exclude_forward, _ := filepath.replace_separators(exclude_path, '/', context.temp_allocator)
@@ -58,22 +72,39 @@ get_workspace_symbols :: proc(query: string) -> (workspace_symbols: []WorkspaceS
 						lower_pkg := strings.to_lower(pkg)
 						lower_exclude := strings.to_lower(exclude_forward[:len(exclude_forward) - 3])
 						if strings.contains(lower_pkg, lower_exclude) {
+							excluded_dirs += 1
 							continue _pkg
 						}
 					} else {
 						lower_pkg := strings.to_lower(pkg)
 						lower_exclude := strings.to_lower(exclude_forward)
 						if lower_pkg == lower_exclude {
+							excluded_dirs += 1
 							continue _pkg
 						}
 					}
 				}
 
 				try_build_package(pkg)
+				built_packages += 1
 				append(&cache.pkgs, strings.clone(pkg, context.allocator))
 			}
 		}
 		cache.time = time.now()
+
+		if common.config.verbose {
+			log.infof(
+				"workspace/symbol cache rebuild: workspaces=%v scanned_dirs=%v candidate_dirs=%v odin_dirs=%v excluded_dirs=%v built_packages=%v cache_pkgs=%v elapsed_ms=%v",
+				len(common.config.workspace_folders),
+				scanned_dirs,
+				candidate_dirs,
+				odin_dirs,
+				excluded_dirs,
+				built_packages,
+				len(cache.pkgs),
+				time.duration_milliseconds(time.since(rebuild_start)),
+			)
+		}
 	}
 
 	limit :: 100
@@ -88,6 +119,16 @@ get_workspace_symbols :: proc(query: string) -> (workspace_symbols: []WorkspaceS
 
 			append(&symbols, symbol)
 		}
+	}
+
+	if common.config.verbose {
+		log.infof(
+			"workspace/symbol query: query=%q rebuilt=%v cache_pkgs=%v results=%v",
+			query,
+			cache_rebuilt,
+			len(cache.pkgs),
+			len(symbols),
+		)
 	}
 
 
