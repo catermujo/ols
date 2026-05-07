@@ -14,9 +14,9 @@ import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:sync"
+import "core:time"
 
 import "src:common"
-import "src:spall"
 
 Header :: struct {
 	content_length: int,
@@ -60,9 +60,9 @@ requests_mutex: sync.Mutex
 requests: [dynamic]Request
 deletings: [dynamic]Request
 
-thread_request_main :: proc(data: rawptr) {
-	spall.thread("request")
+SLOW_REQUEST_THRESHOLD_MS :: 200
 
+thread_request_main :: proc(data: rawptr) {
 	request_data := cast(^RequestThreadData)data
 
 	for common.config.running {
@@ -114,8 +114,6 @@ thread_request_main :: proc(data: rawptr) {
 		sync.mutex_lock(&requests_mutex)
 
 		method := method_value.(json.String)
-
-		spall.trace("request", fmt.tprint(method, id))
 
 		if method == "$/cancelRequest" {
 			append(&deletings, Request{id = id})
@@ -298,6 +296,10 @@ consume_requests :: proc(config: ^common.Config, writer: ^Writer) -> bool {
 		append(&temp_requests, request)
 	}
 
+	if config.verbose && len(temp_requests) >= 8 {
+		log.infof("request batch: processing=%v queued=%v", len(temp_requests), len(requests))
+	}
+
 	sync.mutex_unlock(&requests_mutex)
 
 	request_index := 0
@@ -352,24 +354,39 @@ call :: proc(value: json.Value, id: RequestId, writer: ^Writer, config: ^common.
 		return
 	}
 
-	if fn, ok := call_map[method]; !ok {
-		// nil id == notification - do not respond
-		if id != nil {
-		response := make_response_message_error(
-			id = id,
-			error = ResponseError{code = .MethodNotFound, message = ""},
-		)
-		send_error(response, writer)
-		}
-	} else {
-		params := root["params"]
-		spall.trace(method)
-		err := fn(params, id, config, writer)
-		// nil id == notification - do not respond
-		if err != .None && id != nil {
-			response := make_response_message_error(id = id, error = ResponseError{code = err, message = ""})
+	diff: time.Duration
+	{
+		time.SCOPED_TICK_DURATION(&diff)
+
+		if fn, ok := call_map[method]; !ok {
+            // nil id == notification - do not respond
+            if id != nil {
+			response := make_response_message_error(
+				id = id,
+				error = ResponseError{code = .MethodNotFound, message = ""},
+			)
 			send_error(response, writer)
+            }
+		} else {
+			err := fn(root["params"], id, config, writer)
+			// nil id == notification - do not respond
+			if err != .None && id != nil {
+				response := make_response_message_error(id = id, error = ResponseError{code = err, message = ""})
+				send_error(response, writer)
+			}
 		}
+	}
+
+	duration_ms := time.duration_milliseconds(diff)
+	should_trace := config.verbose && method == "workspace/symbol"
+
+	if duration_ms >= SLOW_REQUEST_THRESHOLD_MS || should_trace {
+		log.infof(
+			"request trace: method=%q id=%v duration_ms=%v",
+			method,
+			id,
+			duration_ms,
+		)
 	}
 }
 
