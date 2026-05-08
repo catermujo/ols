@@ -505,7 +505,7 @@ write_procedure_symbol_signature :: proc(sb: ^strings.Builder, value: SymbolProc
 	if detailed_signature {
 		for tag in value.tags {
 			s := ""
-			switch tag {
+			#partial switch tag {
 			case .Optional_Ok:
 				s = "#optional_ok"
 			case .Optional_Allocator_Error:
