@@ -629,10 +629,25 @@ prepare_references :: proc(
 		}
 
 		resolve_flag = .Field
-	} else if position_context.selector_expr != nil {
-		if position_in_node(position_context.selector, position_context.position) &&
-		   position_context.identifier != nil {
-			ident := position_context.identifier.derived.(^ast.Ident)
+		} else if position_context.implicit &&
+		   position_context.implicit_selector_expr != nil &&
+		   position_in_node(position_context.implicit_selector_expr, position_context.position) {
+			resolve_flag = .Field
+
+			symbol, ok = resolve_location_implicit_selector(
+				ast_context,
+				position_context,
+				position_context.implicit_selector_expr,
+			)
+			symbol.flags -= {.Local}
+
+			if !ok {
+				return
+			}
+		} else if position_context.selector_expr != nil {
+			if position_in_node(position_context.selector, position_context.position) &&
+			   position_context.identifier != nil {
+				ident := position_context.identifier.derived.(^ast.Ident)
 
 			symbol, ok = resolve_location_identifier(ast_context, ident^)
 
@@ -745,6 +760,90 @@ get_target_name :: proc(position_context: ^DocumentPositionContext, resolve_flag
 	return ""
 }
 
+location_equals :: proc(a, b: common.Location) -> bool {
+	return strings.equal_fold(a.uri, b.uri) && a.range == b.range
+}
+
+append_location_unique :: proc(
+	locations: ^[dynamic]common.Location,
+	location: common.Location,
+	allocator := context.allocator,
+) {
+	for existing in locations^ {
+		if location_equals(existing, location) {
+			return
+		}
+	}
+
+	append(locations, common.Location{
+		range = location.range,
+		uri   = strings.clone(location.uri, allocator),
+	})
+}
+
+collect_implicit_selector_named_locations :: proc(
+	document: ^Document,
+	target_name: string,
+	allocator := context.allocator,
+) -> []common.Location {
+	locations := make([dynamic]common.Location, 0, allocator)
+
+	Visit_Data :: struct {
+		document:    ^Document,
+		target_name: string,
+		locations:   ^[dynamic]common.Location,
+		allocator:   mem.Allocator,
+	}
+
+	data := Visit_Data{
+		document    = document,
+		target_name = target_name,
+		locations   = &locations,
+		allocator   = allocator,
+	}
+
+	visitor := ast.Visitor{
+		data = &data,
+		visit = proc(visitor: ^ast.Visitor, node: ^ast.Node) -> ^ast.Visitor {
+			if node == nil {
+				return nil
+			}
+
+			data := (^Visit_Data)(visitor.data)
+
+			implicit, ok := node.derived.(^ast.Implicit_Selector_Expr)
+			if !ok || implicit.field == nil {
+				return visitor
+			}
+
+			if data.target_name != "" && implicit.field.name != data.target_name {
+				return visitor
+			}
+
+			range := common.get_token_range(node^, string(data.document.text))
+			range.start.character += 1
+
+			uri := common.create_uri(implicit.pos.file, context.temp_allocator)
+			append_location_unique(
+				data.locations,
+				common.Location{
+					range = range,
+					uri   = uri.uri,
+				},
+				data.allocator,
+			)
+
+			return visitor
+		},
+	}
+
+	for decl in document.ast.decls {
+		ast.walk(&visitor, decl)
+	}
+
+	return locations[:]
+}
+
 resolve_references :: proc(
 	document: ^Document,
 	ast_context: ^AstContext,
@@ -786,7 +885,13 @@ resolve_references :: proc(
 				uri   = strings.clone(node_uri.uri, ast_context.allocator),
 			}
 
-			append(&locations, location)
+			append_location_unique(&locations, location, ast_context.allocator)
+		}
+	}
+
+	if resolve_flag == .Field && target_name != "" {
+		for location in collect_implicit_selector_named_locations(document, target_name, ast_context.allocator) {
+			append_location_unique(&locations, location, ast_context.allocator)
 		}
 	}
 
@@ -925,7 +1030,13 @@ resolve_references :: proc(
 						range = range,
 						uri   = strings.clone(node_uri.uri, ast_context.allocator),
 					}
-					append(&locations, location)
+					append_location_unique(&locations, location, ast_context.allocator)
+				}
+			}
+
+			if resolve_flag == .Field && target_name != "" {
+				for location in collect_implicit_selector_named_locations(&document, target_name, ast_context.allocator) {
+					append_location_unique(&locations, location, ast_context.allocator)
 				}
 			}
 		}

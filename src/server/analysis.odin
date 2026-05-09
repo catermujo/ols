@@ -1805,6 +1805,13 @@ resolve_soa_selector_field :: proc(
 resolve_selector_expression :: proc(ast_context: ^AstContext, node: ^ast.Selector_Expr) -> (Symbol, bool) {
 	selector := Symbol{}
 	if ok := internal_resolve_type_expression(ast_context, node.expr, &selector); ok {
+		if resolved_alias, ok := resolve_alias_symbol_target(ast_context, selector, node.pos.file); ok {
+			selector = resolved_alias
+		}
+		if resolved_basic, ok := resolve_basic_symbol_target(ast_context, selector, node.pos.file); ok {
+			selector = resolved_basic
+		}
+
 		set_ast_package_from_symbol_scoped(ast_context, selector)
 
 		symbol := Symbol{}
@@ -2897,25 +2904,24 @@ resolve_implicit_selector :: proc(
 	}
 
 	if position_context.index != nil {
-		symbol: Symbol
-		ok := false
-		if position_context.previous_index != nil {
-			symbol, ok = resolve_type_expression(ast_context, position_context.previous_index)
-			if !ok {
-				return {}, false
-			}
-		} else {
-			symbol, ok = resolve_type_expression(ast_context, position_context.index.expr)
-			if !ok {
-				return {}, false
+		if symbol, ok := resolve_type_expression(ast_context, position_context.index.expr); ok {
+			#partial switch value in symbol.value {
+			case SymbolFixedArrayValue:
+				return resolve_type_expression(ast_context, value.len)
+			case SymbolMapValue:
+				return resolve_type_expression(ast_context, value.key)
 			}
 		}
 
-		#partial switch value in symbol.value {
-		case SymbolFixedArrayValue:
-			return resolve_type_expression(ast_context, value.len)
-		case SymbolMapValue:
-			return resolve_type_expression(ast_context, value.key)
+		if position_context.previous_index != nil {
+			if symbol, ok := resolve_type_expression(ast_context, position_context.previous_index); ok {
+				#partial switch value in symbol.value {
+				case SymbolFixedArrayValue:
+					return resolve_type_expression(ast_context, value.len)
+				case SymbolMapValue:
+					return resolve_type_expression(ast_context, value.key)
+				}
+			}
 		}
 	}
 
@@ -3437,6 +3443,10 @@ resolve_alias_symbol_target :: proc(
 	Symbol,
 	bool,
 ) {
+	if .Local in symbol.flags && symbol.type != .Field {
+		return symbol, false
+	}
+
 	if symbol.name == "" || symbol.pkg == "" {
 		return symbol, false
 	}
@@ -3452,7 +3462,52 @@ resolve_alias_symbol_target :: proc(
 		}
 	}
 
+	if reflect.union_variant_typeid(candidate.value) != reflect.union_variant_typeid(symbol.value) ||
+	   candidate.type != symbol.type ||
+	   candidate.range != symbol.range ||
+	   candidate.uri != symbol.uri {
+		return candidate, true
+	}
+
 	return symbol, false
+}
+
+resolve_basic_symbol_target :: proc(
+	ast_context: ^AstContext,
+	symbol: Symbol,
+	file: string,
+) -> (
+	Symbol,
+	bool,
+) {
+	basic, ok := symbol.value.(SymbolBasicValue)
+	if !ok || basic.ident == nil {
+		return symbol, false
+	}
+
+	name := basic.ident.name
+	if name == "" {
+		return symbol, false
+	}
+
+	pkg := symbol.pkg
+	if pkg == "" {
+		pkg = ast_context.current_package
+	}
+
+	candidate, found := lookup(name, pkg, file)
+	if !found {
+		return symbol, false
+	}
+
+	if reflect.union_variant_typeid(candidate.value) == reflect.union_variant_typeid(symbol.value) &&
+	   candidate.pkg == symbol.pkg &&
+	   candidate.range == symbol.range &&
+	   candidate.uri == symbol.uri {
+		return symbol, false
+	}
+
+	return candidate, true
 }
 
 resolve_selector_alias_symbol :: proc(
@@ -3478,6 +3533,9 @@ resolve_location_symbol_selector :: proc(
 	symbol := resolve_base_symbol(ast_context, symbol)
 	if resolved_alias, ok := resolve_selector_alias_symbol(ast_context, selector, symbol); ok {
 		symbol = resolved_alias
+	}
+	if resolved_basic, ok := resolve_basic_symbol_target(ast_context, symbol, selector.pos.file); ok {
+		return resolve_location_symbol_selector(ast_context, selector, resolved_basic)
 	}
 
 	if selector.field != nil {
@@ -3567,6 +3625,9 @@ resolve_symbol_selector :: proc(
 	symbol := resolve_base_symbol(ast_context, symbol)
 	if resolved_alias, ok := resolve_selector_alias_symbol(ast_context, selector, symbol); ok {
 		symbol = resolved_alias
+	}
+	if resolved_basic, ok := resolve_basic_symbol_target(ast_context, symbol, selector.pos.file); ok {
+		return resolve_symbol_selector(ast_context, selector, resolved_basic)
 	}
 
 	if selector.field != nil {

@@ -3,8 +3,12 @@ package server
 import "core:fmt"
 import "core:log"
 import "core:odin/ast"
+import "core:odin/parser"
 import "core:odin/tokenizer"
+import "core:os"
 import "core:path/filepath"
+import "core:slice"
+import "core:strings"
 
 import "src:common"
 
@@ -32,6 +36,124 @@ get_all_package_file_locations :: proc(
 	}
 
 	return true
+}
+
+append_unique_string :: proc(values: ^[dynamic]string, value: string) {
+	if slice.contains(values[:], value) {
+		return
+	}
+	append(values, strings.clone(value, context.temp_allocator))
+}
+
+append_package_files :: proc(paths: ^[dynamic]string, pkg_path: string) {
+	if pkg_path == "" {
+		return
+	}
+
+	matches, err := filepath.glob(fmt.tprintf("%v/*.odin", pkg_path), context.temp_allocator)
+	if err != nil && err != .Not_Exist {
+		return
+	}
+
+	for match in matches {
+		append_unique_string(paths, match)
+	}
+}
+
+collect_implicit_definition_candidate_files :: proc(document: ^Document) -> []string {
+	paths := make([dynamic]string, 0, context.temp_allocator)
+
+	append_unique_string(&paths, document.fullpath)
+	append_package_files(&paths, document.package_name)
+
+	for imp in document.imports {
+		append_package_files(&paths, imp.name)
+	}
+
+	return paths[:]
+}
+
+find_enum_member_definition_fallback :: proc(
+	document: ^Document,
+	member_name: string,
+) -> (
+	common.Location,
+	bool,
+) {
+	if member_name == "" {
+		return {}, false
+	}
+
+	candidate_paths := collect_implicit_definition_candidate_files(document)
+	results := make([dynamic]common.Location, 0, context.temp_allocator)
+
+	for fullpath in candidate_paths {
+		data, err := os.read_entire_file(fullpath, context.temp_allocator)
+		if err != nil {
+			continue
+		}
+
+		p := parser.Parser {
+			flags = {.Optional_Semicolons},
+		}
+
+		pkg := new(ast.Package)
+		pkg.kind = .Normal
+		pkg.fullpath = fullpath
+
+		file := ast.File {
+			fullpath = fullpath,
+			src      = string(data),
+			pkg      = pkg,
+		}
+
+		if !parser.parse_file(&p, &file) {
+			continue
+		}
+
+		uri := common.create_uri(fullpath, context.temp_allocator)
+
+		for decl in file.decls {
+			value_decl, ok := decl.derived.(^ast.Value_Decl)
+			if !ok {
+				continue
+			}
+
+			for value in value_decl.values {
+				enum_type, ok := value.derived.(^ast.Enum_Type)
+				if !ok {
+					continue
+				}
+
+				for field in enum_type.fields {
+					if ident, ok := field.derived.(^ast.Ident); ok {
+						if ident.name != member_name {
+							continue
+						}
+						append(&results, common.Location {
+							uri   = strings.clone(uri.uri, context.temp_allocator),
+							range = common.get_token_range(ident, file.src),
+						})
+					} else if field_value, ok := field.derived.(^ast.Field_Value); ok {
+						ident, ok := field_value.field.derived.(^ast.Ident)
+						if !ok || ident.name != member_name {
+							continue
+						}
+						append(&results, common.Location {
+							uri   = strings.clone(uri.uri, context.temp_allocator),
+							range = common.get_token_range(ident, file.src),
+						})
+					}
+				}
+			}
+		}
+	}
+
+	if len(results) == 0 {
+		return {}, false
+	}
+
+	return results[0], true
 }
 
 get_definition_location :: proc(document: ^Document, position: common.Position, config: ^common.Config) -> ([]common.Location, bool) {
@@ -68,6 +190,24 @@ get_definition_location :: proc(document: ^Document, position: common.Position, 
 	if position_context.import_stmt != nil {
 		if get_all_package_file_locations(document, position_context.import_stmt, &locations) {
 			return locations[:], true
+		}
+	} else if position_context.implicit_selector_expr != nil {
+		if resolved, ok := resolve_location_implicit_selector(
+			&ast_context,
+			&position_context,
+			position_context.implicit_selector_expr,
+		); ok {
+			location.range = resolved.range
+			uri = resolved.uri
+		} else {
+			if fallback_location, ok := find_enum_member_definition_fallback(
+				document,
+				position_context.implicit_selector_expr.field.name,
+			); ok {
+				append(&locations, fallback_location)
+				return locations[:], true
+			}
+			return {}, false
 		}
 	} else if position_context.selector_expr != nil {
 		//if the base selector is the client wants to go to.
@@ -127,17 +267,6 @@ get_definition_location :: proc(document: ^Document, position: common.Position, 
 			} else {
 				return {}, false
 			}
-		}
-	} else if position_context.implicit_selector_expr != nil {
-		if resolved, ok := resolve_location_implicit_selector(
-			&ast_context,
-			&position_context,
-			position_context.implicit_selector_expr,
-		); ok {
-			location.range = resolved.range
-			uri = resolved.uri
-		} else {
-			return {}, false
 		}
 	} else if position_context.identifier != nil {
 		if resolved, ok := resolve_location_identifier(

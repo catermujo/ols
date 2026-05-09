@@ -1354,35 +1354,51 @@ get_implicit_completion :: proc(
 	}
 
 	if position_context.index != nil {
-		symbol: Symbol
-		ok := false
-		if position_context.previous_index != nil {
-			symbol, ok = resolve_type_expression(ast_context, position_context.previous_index)
-			if !ok {
-				return is_incomplete
+		if symbol, ok := resolve_type_expression(ast_context, position_context.index.expr); ok {
+			#partial switch v in symbol.value {
+			case SymbolFixedArrayValue:
+				if enum_value, unwrapped_super_enum, ok := unwrap_enum(ast_context, v.len); ok {
+					for i in 0 ..< len(enum_value.names) {
+						item := create_enum_completion_item(position_context, enum_value, i, unwrapped_super_enum)
+						append(results, CompletionResult{completion_item = item})
+					}
+
+					return is_incomplete
+				}
+			case SymbolMapValue:
+				if enum_value, unwrapped_super_enum, ok := unwrap_enum(ast_context, v.key); ok {
+					for name, i in enum_value.names {
+						item := create_enum_completion_item(position_context, enum_value, i, unwrapped_super_enum)
+						append(results, CompletionResult{completion_item = item})
+					}
+
+					return is_incomplete
+				}
 			}
-		} else {
-			symbol, ok = resolve_type_expression(ast_context, position_context.index.expr)
 		}
 
-		#partial switch v in symbol.value {
-		case SymbolFixedArrayValue:
-			if enum_value, unwrapped_super_enum, ok := unwrap_enum(ast_context, v.len); ok {
-				for i in 0 ..< len(enum_value.names) {
-					item := create_enum_completion_item(position_context, enum_value, i, unwrapped_super_enum)
-					append(results, CompletionResult{completion_item = item})
-				}
+		if position_context.previous_index != nil {
+			if symbol, ok := resolve_type_expression(ast_context, position_context.previous_index); ok {
+				#partial switch v in symbol.value {
+				case SymbolFixedArrayValue:
+					if enum_value, unwrapped_super_enum, ok := unwrap_enum(ast_context, v.len); ok {
+						for i in 0 ..< len(enum_value.names) {
+							item := create_enum_completion_item(position_context, enum_value, i, unwrapped_super_enum)
+							append(results, CompletionResult{completion_item = item})
+						}
 
-				return is_incomplete
-			}
-		case SymbolMapValue:
-			if enum_value, unwrapped_super_enum, ok := unwrap_enum(ast_context, v.key); ok {
-				for name, i in enum_value.names {
-					item := create_enum_completion_item(position_context, enum_value, i, unwrapped_super_enum)
-					append(results, CompletionResult{completion_item = item})
-				}
+						return is_incomplete
+					}
+				case SymbolMapValue:
+					if enum_value, unwrapped_super_enum, ok := unwrap_enum(ast_context, v.key); ok {
+						for name, i in enum_value.names {
+							item := create_enum_completion_item(position_context, enum_value, i, unwrapped_super_enum)
+							append(results, CompletionResult{completion_item = item})
+						}
 
-				return is_incomplete
+						return is_incomplete
+					}
+				}
 			}
 		}
 	}
