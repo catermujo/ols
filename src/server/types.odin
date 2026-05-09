@@ -462,6 +462,7 @@ OlsConfig :: struct {
 	enable_document_symbols:                 Maybe(bool),
 	enable_fake_methods:                     Maybe(bool),
 	enable_overload_resolution:              Maybe(bool),
+	enable_definition_skip_alias:            Maybe(bool),
 	enable_references:                       Maybe(bool),
 	enable_document_highlights:              Maybe(bool),
 	enable_document_links:                   Maybe(bool),
