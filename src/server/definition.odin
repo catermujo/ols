@@ -75,6 +75,11 @@ get_definition_location :: proc(document: ^Document, position: common.Position, 
 		   position_context.identifier != nil {
 			ident := position_context.identifier.derived.(^ast.Ident)
 			if resolved, ok := resolve_location_identifier(&ast_context, ident^); ok {
+				if config.enable_definition_skip_alias {
+					if resolved_alias, ok := resolve_alias_symbol_target(&ast_context, resolved, document.fullpath); ok {
+						resolved = resolved_alias
+					}
+				}
 				location.range = resolved.range
 
 				if resolved.uri == "" {
@@ -139,6 +144,11 @@ get_definition_location :: proc(document: ^Document, position: common.Position, 
 			&ast_context,
 			position_context.identifier.derived.(^ast.Ident)^,
 		); ok {
+			if config.enable_definition_skip_alias {
+				if resolved_alias, ok := resolve_alias_symbol_target(&ast_context, resolved, document.fullpath); ok {
+					resolved = resolved_alias
+				}
+			}
 			if config.enable_overload_resolution {
 				resolved = try_resolve_proc_group_overload(&ast_context, &position_context, resolved)
 			}
