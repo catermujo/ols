@@ -3327,6 +3327,9 @@ resolve_location_implicit_selector :: proc(
 	set_ast_package_set_scoped(ast_context, ast_context.document_package)
 
 	symbol = resolve_implicit_selector(ast_context, position_context) or_return
+	if resolved_alias, ok := resolve_alias_symbol_target(ast_context, symbol, implicit_selector.pos.file); ok {
+		symbol = resolved_alias
+	}
 
 	#partial switch v in symbol.value {
 	case SymbolEnumValue:
@@ -3421,6 +3424,43 @@ resolve_location_selector :: proc(ast_context: ^AstContext, selector_expr: ^ast.
 	return {}, false
 }
 
+resolve_alias_symbol_target :: proc(
+	ast_context: ^AstContext,
+	symbol: Symbol,
+	file: string,
+) -> (
+	Symbol,
+	bool,
+) {
+	if symbol.name == "" || symbol.pkg == "" {
+		return symbol, false
+	}
+
+	candidate, ok := lookup(symbol.name, symbol.pkg, file)
+	if !ok {
+		return symbol, false
+	}
+
+	if generic, ok := candidate.value.(SymbolGenericValue); ok && generic.expr != nil {
+		if resolved, ok := resolve_type_expression(ast_context, generic.expr); ok {
+			return resolved, true
+		}
+	}
+
+	return symbol, false
+}
+
+resolve_selector_alias_symbol :: proc(
+	ast_context: ^AstContext,
+	selector: ^ast.Selector_Expr,
+	symbol: Symbol,
+) -> (
+	Symbol,
+	bool,
+) {
+	return resolve_alias_symbol_target(ast_context, symbol, selector.pos.file)
+}
+
 resolve_location_symbol_selector :: proc(
 	ast_context: ^AstContext,
 	selector: ^ast.Selector_Expr,
@@ -3430,7 +3470,10 @@ resolve_location_symbol_selector :: proc(
 	bool,
 ) {
 	field: string
-	symbol := symbol
+	symbol := resolve_base_symbol(ast_context, symbol)
+	if resolved_alias, ok := resolve_selector_alias_symbol(ast_context, selector, symbol); ok {
+		symbol = resolved_alias
+	}
 
 	if selector.field != nil {
 		if ident, ok := selector.field.derived.(^ast.Ident); ok {
@@ -3439,6 +3482,13 @@ resolve_location_symbol_selector :: proc(
 	}
 
 	#partial switch v in symbol.value {
+	case SymbolGenericValue:
+		if v.expr != nil {
+			if resolved, ok := resolve_type_expression(ast_context, v.expr); ok {
+				return resolve_location_symbol_selector(ast_context, selector, resolved)
+			}
+		}
+		return {}, false
 	case SymbolEnumValue:
 		for name, i in v.names {
 			if strings.compare(name, field) == 0 {
@@ -3509,7 +3559,10 @@ resolve_symbol_selector :: proc(
 	bool,
 ) {
 	field: string
-	symbol := symbol
+	symbol := resolve_base_symbol(ast_context, symbol)
+	if resolved_alias, ok := resolve_selector_alias_symbol(ast_context, selector, symbol); ok {
+		symbol = resolved_alias
+	}
 
 	if selector.field != nil {
 		#partial switch v in selector.field.derived {
@@ -3519,6 +3572,13 @@ resolve_symbol_selector :: proc(
 	}
 
 	#partial switch v in symbol.value {
+	case SymbolGenericValue:
+		if v.expr != nil {
+			if resolved, ok := resolve_type_expression(ast_context, v.expr); ok {
+				return resolve_symbol_selector(ast_context, selector, resolved)
+			}
+		}
+		return {}, false
 	case SymbolEnumValue:
 		for name, i in v.names {
 			if strings.compare(name, field) == 0 {

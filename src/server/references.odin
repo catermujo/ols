@@ -19,6 +19,7 @@ ReferenceImportCache :: struct {
 	file_imports:         map[string][dynamic]string,
 	package_files:        map[string][dynamic]string,
 	importers_by_package: map[string][dynamic]string,
+	scanned_roots:        map[string]bool,
 	initialized:          bool,
 }
 
@@ -56,6 +57,11 @@ reference_import_cache_reset :: proc() {
 	}
 	clear(&reference_import_cache.importers_by_package)
 
+	for root in reference_import_cache.scanned_roots {
+		delete(root)
+	}
+	clear(&reference_import_cache.scanned_roots)
+
 	reference_import_cache.initialized = false
 }
 
@@ -72,6 +78,10 @@ reference_import_cache_ensure_maps :: proc() {
 
 	if reference_import_cache.importers_by_package == nil {
 		reference_import_cache.importers_by_package = make(map[string][dynamic]string, 256, allocator)
+	}
+
+	if reference_import_cache.scanned_roots == nil {
+		reference_import_cache.scanned_roots = make(map[string]bool, 64, allocator)
 	}
 }
 
@@ -411,7 +421,11 @@ collect_reference_cached_package_files :: proc(pkg_name: string, paths: ^map[str
 collect_reference_cached_importers :: proc(pkg_name: string, paths: ^map[string]struct{}) {
 	files, ok := reference_import_cache.importers_by_package[pkg_name]
 	if !ok {
-		return
+		reference_import_cache_scan_tree(filepath.dir(pkg_name))
+		files, ok = reference_import_cache.importers_by_package[pkg_name]
+		if !ok {
+			return
+		}
 	}
 
 	importer_pkg_dirs := make(map[string]struct{}, 0, context.temp_allocator)
@@ -430,6 +444,63 @@ collect_reference_cached_importers :: proc(pkg_name: string, paths: ^map[string]
 		if !collect_reference_cached_package_files(pkg_dir, paths) {
 			collect_reference_package_files(pkg_dir, paths)
 		}
+	}
+}
+
+reference_import_cache_scan_tree :: proc(root_dir: string) {
+	if root_dir == "" || reference_should_skip_dir(root_dir) {
+		return
+	}
+
+	root := path.clean(root_dir, context.temp_allocator)
+	root, _ = filepath.replace_separators(root, '/', context.temp_allocator)
+
+	if scanned, exists := reference_import_cache.scanned_roots[root]; exists && scanned {
+		return
+	}
+	reference_import_cache.scanned_roots[strings.clone(root, reference_cache_allocator())] = true
+
+	w := os.walker_create(root)
+	defer os.walker_destroy(&w)
+
+	scan_arena: runtime.Arena
+	_ = runtime.arena_init(&scan_arena, mem.Megabyte * 2, runtime.default_allocator())
+	defer runtime.arena_destroy(&scan_arena)
+
+	for info in os.walker_walk(&w) {
+		fullpath := info.fullpath
+
+		if info.type == .Directory {
+			if reference_should_skip_dir(fullpath) || reference_path_is_excluded(fullpath) {
+				os.walker_skip_dir(&w)
+			}
+			continue
+		}
+
+		if filepath.ext(fullpath) != ".odin" {
+			continue
+		}
+
+		if reference_path_is_excluded(fullpath) {
+			continue
+		}
+
+		runtime.arena_free_all(&scan_arena)
+		scan_allocator := runtime.arena_allocator(&scan_arena)
+		data, err := os.read_entire_file(fullpath, scan_allocator)
+		if err != nil {
+			continue
+		}
+
+		import_paths := make(map[string]struct{}, 0, context.temp_allocator)
+		reference_collect_source_import_paths(fullpath, string(data), &import_paths)
+
+		import_list := make([dynamic]string, 0, len(import_paths), context.temp_allocator)
+		for import_path in import_paths {
+			append(&import_list, import_path)
+		}
+
+		reference_import_cache_store_file(fullpath, import_list[:])
 	}
 }
 
@@ -832,7 +903,7 @@ resolve_references :: proc(
 		}
 
 		if in_pkg ||
-		   symbol.pkg == document.package_name ||
+		   strings.equal_fold(symbol.pkg, dir) ||
 		   reference_cached_package_dir_imports_package(dir, symbol.pkg) {
 			symbols_and_nodes := resolve_entire_file(&document, resolve_flag, context.allocator, target_name)
 			for k, v in symbols_and_nodes {
