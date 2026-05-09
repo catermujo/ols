@@ -511,6 +511,8 @@ read_ols_initialize_options :: proc(config: ^common.Config, ols_config: OlsConfi
 	config.enable_fake_method = ols_config.enable_fake_methods.(bool) or_else config.enable_fake_method
 	config.enable_overload_resolution =
 		ols_config.enable_overload_resolution.(bool) or_else config.enable_overload_resolution
+	config.enable_definition_skip_alias =
+		ols_config.enable_definition_skip_alias.(bool) or_else config.enable_definition_skip_alias
 
 	// Delete overriding collections.
 	for it in ols_config.collections {
@@ -722,6 +724,7 @@ request_initialize :: proc(
 	config.checker_args = ""
 	config.enable_fake_method = false
 	config.enable_procedure_snippet = true
+	config.enable_definition_skip_alias = false
 	config.enable_checker_only_saved = true
 	config.enable_checker_workspace_diagnostics = false
 	config.enable_auto_import = true

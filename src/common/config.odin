@@ -41,6 +41,7 @@ Config :: struct {
 	enable_import_fixer:                     bool,
 	enable_fake_method:                      bool,
 	enable_overload_resolution:              bool,
+	enable_definition_skip_alias:            bool,
 	enable_procedure_snippet:                bool,
 	enable_checker_only_saved:               bool,
 	enable_checker_workspace_diagnostics:    bool,
