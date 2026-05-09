@@ -414,9 +414,40 @@ collect_reference_cached_importers :: proc(pkg_name: string, paths: ^map[string]
 		return
 	}
 
+	importer_pkg_dirs := make(map[string]struct{}, 0, context.temp_allocator)
+
 	for fullpath in files {
 		add_reference_candidate_path(paths, fullpath)
+
+		pkg_dir := filepath.dir(fullpath)
+		if _, exists := importer_pkg_dirs[pkg_dir]; !exists {
+			importer_pkg_dirs[strings.clone(pkg_dir, context.temp_allocator)] = {}
+		}
 	}
+
+	// Package-level re-exports can be imported in one file and used everywhere in that package.
+	for pkg_dir in importer_pkg_dirs {
+		if !collect_reference_cached_package_files(pkg_dir, paths) {
+			collect_reference_package_files(pkg_dir, paths)
+		}
+	}
+}
+
+reference_cached_package_dir_imports_package :: proc(pkg_dir, pkg_name: string) -> bool {
+	files, ok := reference_import_cache.importers_by_package[pkg_name]
+	if !ok {
+		return false
+	}
+
+	forward_pkg_dir, _ := filepath.replace_separators(pkg_dir, '/', context.temp_allocator)
+
+	for fullpath in files {
+		if strings.equal_fold(filepath.dir(fullpath), forward_pkg_dir) {
+			return true
+		}
+	}
+
+	return false
 }
 
 collect_reference_all_cached_files :: proc(paths: ^map[string]struct{}) {
@@ -800,7 +831,9 @@ resolve_references :: proc(
 			}
 		}
 
-		if in_pkg || symbol.pkg == document.package_name {
+		if in_pkg ||
+		   symbol.pkg == document.package_name ||
+		   reference_cached_package_dir_imports_package(dir, symbol.pkg) {
 			symbols_and_nodes := resolve_entire_file(&document, resolve_flag, context.allocator, target_name)
 			for k, v in symbols_and_nodes {
 				if strings.equal_fold(v.symbol.uri, symbol.uri) && v.symbol.range == symbol.range {
