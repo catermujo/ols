@@ -6,6 +6,21 @@ import "core:testing"
 import test "src:testing"
 
 @(test)
+ast_directive_completion_no_copy :: proc(t: ^testing.T) {
+	source := test.Source {
+		main     = `package test
+
+		main :: proc() {
+			_ := #n{*}
+		}
+		`,
+		packages = {},
+	}
+
+	test.expect_completion_labels(t, &source, "", {"no_copy"})
+}
+
+@(test)
 ast_simple_struct_completion :: proc(t: ^testing.T) {
 	source := test.Source {
 		main     = `package test
