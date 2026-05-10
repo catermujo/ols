@@ -900,13 +900,14 @@ free_ast_node :: proc(node: ^ast.Node, allocator: mem.Allocator) {
 	case ^ast.Or_Branch_Expr:
 		free_ast(n.expr, allocator)
 		free_ast(n.label, allocator)
-	case ^ast.Matrix_Index_Expr:
-		free_ast(n.expr, allocator)
-		free_ast(n.row_index, allocator)
-		free_ast(n.column_index, allocator)
-	case:
-		panic(fmt.aprintf("free Unhandled node kind: %v", node.derived))
-	}
+		case ^ast.Matrix_Index_Expr:
+			free_ast(n.expr, allocator)
+			free_ast(n.row_index, allocator)
+			free_ast(n.column_index, allocator)
+		case:
+			// Keep running even if compiler adds AST variants we do not know yet.
+			log.warnf("free_ast: unhandled node kind: %v", node.derived)
+		}
 
 	mem.free(node, allocator)
 }

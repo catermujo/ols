@@ -2848,6 +2848,18 @@ ast_hover_proc_attributes_key_value :: proc(t: ^testing.T) {
 }
 
 @(test)
+ast_hover_proc_attributes_operator :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+		@(operator="+") f{*}oo :: proc(a, b: int) -> int {
+			return a + b
+		}
+	`,
+	}
+	test.expect_hover(t, &source, "@(operator=\"+\")\ntest.foo :: proc(a, b: int) -> int")
+}
+
+@(test)
 ast_hover_proc_force_inline :: proc(t: ^testing.T) {
 	source := test.Source {
 		main = `package test
@@ -5959,6 +5971,16 @@ ast_hover_directives_config_info :: proc(t: ^testing.T) {
 		`,
 	}
 	test.expect_hover(t, &source, "#config(<identifier>, default)\n\nChecks if an identifier is defined through the command line, or gives a default value instead.\n\nValues can be set with the `-define:NAME=VALUE` command line flag.")
+}
+
+@(test)
+ast_hover_struct_tag_no_copy :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+		F{*}oo :: struct #no_copy {}
+		`,
+	}
+	test.expect_hover(t, &source, "test.Foo :: struct #no_copy {}")
 }
 
 @(test)
