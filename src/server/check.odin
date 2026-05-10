@@ -57,6 +57,9 @@ checker: Checker
 check_enqueue_count: int
 
 @(private = "file")
+check_worker_thread: ^thread.Thread
+
+@(private = "file")
 check_mode_to_string :: proc(mode: Check_Mode) -> string {
 	switch mode {
 	case .Saved:
@@ -96,6 +99,10 @@ queue_check_request :: proc(mode: Check_Mode, path: string, config: ^common.Conf
 
 stop_check_worker :: proc() {
 	chan.close(checker.send)
+	if check_worker_thread != nil {
+		thread.destroy(check_worker_thread)
+		check_worker_thread = nil
+	}
 }
 
 create_and_start_check_worker :: proc(writer: ^Writer) {
@@ -107,7 +114,7 @@ create_and_start_check_worker :: proc(writer: ^Writer) {
 		send      = check_send,
 	}
 	check_recv := chan.as_recv(check_chan)
-	thread.create_and_start_with_poly_data(
+	check_worker_thread = thread.create_and_start_with_poly_data(
 		Consumer{logger = context.logger, ch = check_recv, w = writer},
 		run_check_consumer,
 	)
@@ -151,6 +158,121 @@ run_check_consumer :: proc(c: Consumer) {
 		free_all(context.temp_allocator)
 	}
 	free_all(context.temp_allocator)
+}
+
+@(private = "file")
+decode_check_results :: proc(data: []u8, allocator: mem.Allocator) -> (Json_Errors, bool) {
+	json_errors: Json_Errors
+
+	get_int :: proc(v: json.Value) -> (int, bool) {
+		#partial switch x in v {
+		case json.Integer:
+			return int(x), true
+		case json.Float:
+			return int(x), true
+		case:
+			return 0, false
+		}
+	}
+
+	s := ensure_valid_utf8(string(data), allocator)
+	root_value, parse_err := json.parse_string(data = s, allocator = allocator, parse_integers = true)
+	if parse_err != .None {
+		log.errorf("Failed to parse check results: %v, %v", parse_err, s)
+		return json_errors, false
+	}
+
+	root, root_ok := root_value.(json.Object)
+	if !root_ok {
+		log.errorf("Failed to decode check results root object: %v", s)
+		return json_errors, false
+	}
+
+	if count_value, has_count := root["error_count"]; has_count {
+		if count, count_ok := get_int(count_value); count_ok {
+			json_errors.error_count = count
+		}
+	}
+
+	errors_value, has_errors := root["errors"]
+	if !has_errors {
+		return json_errors, true
+	}
+
+	errors_array, errors_ok := errors_value.(json.Array)
+	if !errors_ok {
+		log.errorf("Failed to decode check result errors array: %v", s)
+		return json_errors, false
+	}
+
+	parsed_errors := make([dynamic]Json_Error, 0, len(errors_array), allocator)
+
+	for error_value in errors_array {
+		error_object, error_ok := error_value.(json.Object)
+		if !error_ok {
+			continue
+		}
+
+		entry: Json_Error
+
+		if type_value, has_type := error_object["type"]; has_type {
+			if type_name, type_ok := type_value.(json.String); type_ok {
+				entry.type = strings.clone(type_name, allocator)
+			}
+		}
+
+		if pos_value, has_pos := error_object["pos"]; has_pos {
+			if pos_object, pos_ok := pos_value.(json.Object); pos_ok {
+				if file_value, has_file := pos_object["file"]; has_file {
+					if file, file_ok := file_value.(json.String); file_ok {
+						entry.pos.file = strings.clone(file, allocator)
+					}
+				}
+
+				if offset_value, has_offset := pos_object["offset"]; has_offset {
+					if offset, offset_ok := get_int(offset_value); offset_ok {
+						entry.pos.offset = offset
+					}
+				}
+				if line_value, has_line := pos_object["line"]; has_line {
+					if line, line_ok := get_int(line_value); line_ok {
+						entry.pos.line = line
+					}
+				}
+				if column_value, has_column := pos_object["column"]; has_column {
+					if column, column_ok := get_int(column_value); column_ok {
+						entry.pos.column = column
+					}
+				}
+				if end_column_value, has_end_column := pos_object["end_column"]; has_end_column {
+					if end_column, end_column_ok := get_int(end_column_value); end_column_ok {
+						entry.pos.end_column = end_column
+					}
+				}
+			}
+		}
+
+		if msgs_value, has_msgs := error_object["msgs"]; has_msgs {
+			if msgs_array, msgs_ok := msgs_value.(json.Array); msgs_ok {
+				messages := make([dynamic]string, 0, len(msgs_array), allocator)
+				for msg_value in msgs_array {
+					if msg, msg_ok := msg_value.(json.String); msg_ok {
+						append(&messages, strings.clone(msg, allocator))
+					}
+				}
+				entry.msgs = messages[:]
+			}
+		}
+
+		append(&parsed_errors, entry)
+	}
+
+	json_errors.errors = parsed_errors[:]
+	if json_errors.error_count == 0 && len(parsed_errors) > 0 {
+		json_errors.error_count = len(parsed_errors)
+	}
+
+	return json_errors, true
 }
 
 //If the user does not specify where to call odin check, it'll just find all directory with odin, and call them seperately.
@@ -343,23 +465,15 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config) {
 				}
 			}
 
-			os.close(p.reader)
-			p.reader = nil
+				os.close(p.reader)
+				p.reader = nil
 
-			if len(p.buffer) > 0 {
-				json_errors: Json_Errors
-				if res := json.unmarshal(
-					p.buffer[:],
-					&json_errors,
-					json.DEFAULT_SPECIFICATION,
-					context.temp_allocator,
-				); res != nil {
-					log.errorf("Failed to unmarshal check results: %v, %v", res, string(p.buffer[:]))
-					continue
+				if len(p.buffer) > 0 {
+					if json_errors, ok := decode_check_results(p.buffer[:], context.temp_allocator); ok {
+						append(&errors, json_errors)
+					}
 				}
-				append(&errors, json_errors)
 			}
-		}
 
 		if running_count > 0 || next_index < len(paths) {
 			time.sleep(1 * time.Millisecond)
