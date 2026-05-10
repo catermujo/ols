@@ -344,6 +344,22 @@ unwrap_attr_elem :: proc(elem: ^ast.Expr) -> (^ast.Ident, ^ast.Expr, bool) {
 	return nil, nil, false
 }
 
+get_attribute_operator :: proc(attributes: []^ast.Attribute) -> (string, bool) {
+	for attribute in attributes {
+		for elem in attribute.elems {
+			ident, value, ok := unwrap_attr_elem(elem)
+			if !ok || ident.name != "operator" || value == nil {
+				continue
+			}
+			if lit, ok := value.derived.(^ast.Basic_Lit); ok && len(lit.tok.text) > 2 {
+				return lit.tok.text[1:len(lit.tok.text) - 1], true
+			}
+		}
+	}
+
+	return "", false
+}
+
 merge_attributes :: proc(attrs: []^ast.Attribute, foreign_attrs: []^ast.Attribute) -> []^ast.Attribute {
 	if len(foreign_attrs) == 0 {
 		return attrs
