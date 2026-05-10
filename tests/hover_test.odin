@@ -3682,6 +3682,90 @@ ast_hover_bit_set_in :: proc(t: ^testing.T) {
 }
 
 @(test)
+ast_hover_for_in_operator_overload_value :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+		Wrap_Iter :: struct {
+			data: []int,
+		}
+
+		@(operator="in")
+		wrap_iter_next_value :: proc(w: Wrap_Iter, it: ^int) -> (value: int, ok: bool) {
+			return 0, false
+		}
+
+		@(operator="in")
+		wrap_iter_next_indexed :: proc(w: Wrap_Iter, it: ^int) -> (value: int, index: int, ok: bool) {
+			return 0, 0, false
+		}
+
+		main :: proc() {
+			w := Wrap_Iter{[]int{3, 5, 7}}
+			for v{*} in w {
+			}
+		}
+		`,
+	}
+	test.expect_hover(t, &source, "test.v: int")
+}
+
+@(test)
+ast_hover_for_in_operator_overload_value_index :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+		Wrap_Iter :: struct {
+			data: []int,
+		}
+
+		@(operator="in")
+		wrap_iter_next_value :: proc(w: Wrap_Iter, it: ^int) -> (value: int, ok: bool) {
+			return 0, false
+		}
+
+		@(operator="in")
+		wrap_iter_next_indexed :: proc(w: Wrap_Iter, it: ^int) -> (value: int, index: int, ok: bool) {
+			return 0, 0, false
+		}
+
+		main :: proc() {
+			w := Wrap_Iter{[]int{3, 5, 7}}
+			for v, i{*} in w {
+			}
+		}
+		`,
+	}
+	test.expect_hover(t, &source, "test.i: int")
+}
+
+@(test)
+ast_hover_for_in_operator_overload_with_default_param :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+		Wrap_Iter :: struct {
+			data: []int,
+		}
+
+		@(operator="in")
+		wrap_iter_next :: proc(w: Wrap_Iter, it: ^int, loc := #caller_location) -> (value: int, ok: bool) {
+			if it^ >= len(w.data) {
+				return 0, false
+			}
+			value = w.data[it^]
+			it^ += 1
+			return value, true
+		}
+
+		main :: proc() {
+			w := Wrap_Iter{[]int{3, 5, 7}}
+			for v{*} in w {
+			}
+		}
+		`,
+	}
+	test.expect_hover(t, &source, "test.v: int")
+}
+
+@(test)
 ast_hover_nested_struct :: proc(t: ^testing.T) {
 	source := test.Source {
 		main = `package test

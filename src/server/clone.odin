@@ -4,6 +4,7 @@ import "base:intrinsics"
 
 import "core:mem"
 import "core:odin/ast"
+import "core:log"
 import "core:odin/tokenizer"
 import "core:reflect"
 import "core:strings"
@@ -78,7 +79,8 @@ clone_node :: proc(node: ^ast.Node, allocator: mem.Allocator, unique_strings: ^m
 
 	#partial switch _ in node.derived {
 	case ^ast.Package, ^ast.File:
-		panic("Cannot clone this node type")
+		log.warnf("clone_node: unsupported root node kind, skipping deep clone: %v", node.derived)
+		return node
 	}
 
 	res := cast(^ast.Node)(mem.alloc(size, align, allocator) or_else panic("OOM"))

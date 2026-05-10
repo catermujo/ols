@@ -396,20 +396,20 @@ marshal_to_writer :: proc(w: io.Writer, v: any, opt: ^Marshal_Options) -> (err: 
 			tag = i64(i)
 		case i32:
 			tag = i64(i)
-		case u64:
-			tag = i64(i)
-		case i64:
-			tag = i64(i)
-		case:
-			panic("Invalid union tag type")
-		}
+			case u64:
+				tag = i64(i)
+			case i64:
+				tag = i64(i)
+			case:
+				log.errorf("marshal: unsupported union tag type: %v", info.tag_type)
+			}
 
-		if v.data == nil || tag == 0 {
-			io.write_string(w, "null") or_return
-		} else {
-			id := info.variants[tag - 1].id
-			return marshal_to_writer(w, any{v.data, id}, opt)
-		}
+			if tag < 0 || v.data == nil || tag == 0 {
+				io.write_string(w, "null") or_return
+			} else {
+				id := info.variants[tag - 1].id
+				return marshal_to_writer(w, any{v.data, id}, opt)
+			}
 
 	case runtime.Type_Info_Enum:
 		return marshal_to_writer(w, any{v.data, info.base.id}, opt)
@@ -457,15 +457,16 @@ marshal_to_writer :: proc(w: io.Writer, v: any, opt: ^Marshal_Options) -> (err: 
 				x = bits.byte_swap(x)
 			}
 			bit_data = u64(x)
-		case 64:
-			x := (^u64)(v.data)^
-			if do_byte_swap {
-				x = bits.byte_swap(x)
+			case 64:
+				x := (^u64)(v.data)^
+				if do_byte_swap {
+					x = bits.byte_swap(x)
+				}
+				bit_data = u64(x)
+			case:
+				log.errorf("marshal: unsupported bit_set width=%d", bit_size)
+				bit_data = 0
 			}
-			bit_data = u64(x)
-		case:
-			panic("unknown bit_size size")
-		}
 		io.write_u64(w, bit_data) or_return
 
 		return .Unsupported_Type

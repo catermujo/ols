@@ -641,6 +641,123 @@ get_locals_if_stmt :: proc(
 	get_locals_stmt(file, stmt.else_stmt, ast_context, document_position)
 }
 
+get_field_type_expr :: proc(field: ^ast.Field) -> (^ast.Expr, bool) {
+	if field == nil {
+		return nil, false
+	}
+	if field.type != nil {
+		return field.type, true
+	}
+	if field.default_value != nil {
+		return field.default_value, true
+	}
+	return nil, false
+}
+
+is_symbol_bool :: proc(symbol: Symbol) -> bool {
+	#partial switch v in symbol.value {
+	case SymbolUntypedValue:
+		return v.type == .Bool
+	case SymbolBasicValue:
+		if ident, ok := v.ident.derived.(^ast.Ident); ok {
+			return ident.name == "bool"
+		}
+	}
+	return false
+}
+
+get_operator_in_result_types :: proc(
+	ast_context: ^AstContext,
+	iter_symbol: Symbol,
+	loop_value_count: int,
+) -> (
+	[]^ast.Expr,
+	string,
+	bool,
+) {
+	if loop_value_count <= 0 {
+		return nil, "", false
+	}
+
+	best_rank := -1
+	best_pkg := ""
+	best_results: []^ast.Expr
+
+	for _, global in ast_context.globals {
+		op, has_op := get_attribute_operator(global.attributes)
+		if !has_op || op != "in" {
+			continue
+		}
+
+		proc_lit, ok := global.expr.derived.(^ast.Proc_Lit)
+		if !ok || proc_lit.type.params == nil || len(proc_lit.type.params.list) < 2 {
+			continue
+		}
+		if proc_lit.type.results == nil || len(proc_lit.type.results.list) < loop_value_count + 1 {
+			continue
+		}
+
+		operator_pkg := get_package_from_node(proc_lit.node)
+		set_ast_package_set_scoped(ast_context, operator_pkg)
+
+		param_type_expr, has_param_type := get_field_type_expr(proc_lit.type.params.list[0])
+		if !has_param_type {
+			set_ast_package_deferred(ast_context, operator_pkg)
+			continue
+		}
+		param_symbol, param_ok := resolve_type_expression(ast_context, param_type_expr)
+		if !param_ok || !is_symbol_same_typed(ast_context, iter_symbol, param_symbol) {
+			set_ast_package_deferred(ast_context, operator_pkg)
+			continue
+		}
+
+		last_result_expr, has_last_result := get_field_type_expr(
+			proc_lit.type.results.list[len(proc_lit.type.results.list) - 1],
+		)
+		if !has_last_result {
+			set_ast_package_deferred(ast_context, operator_pkg)
+			continue
+		}
+		last_result_symbol, last_ok := resolve_type_expression(ast_context, last_result_expr)
+		if !last_ok || !is_symbol_bool(last_result_symbol) {
+			set_ast_package_deferred(ast_context, operator_pkg)
+			continue
+		}
+
+		candidate_results := make([dynamic]^ast.Expr, context.temp_allocator)
+		valid := true
+		for i in 0 ..< loop_value_count {
+			result_expr, has_result := get_field_type_expr(proc_lit.type.results.list[i])
+			if !has_result {
+				valid = false
+				break
+			}
+			append(&candidate_results, result_expr)
+		}
+		set_ast_package_deferred(ast_context, operator_pkg)
+
+		if !valid || len(candidate_results) != loop_value_count {
+			continue
+		}
+
+		rank := 1
+		if len(proc_lit.type.results.list) == loop_value_count + 1 {
+			rank = 2
+		}
+		if rank > best_rank {
+			best_rank = rank
+			best_pkg = operator_pkg
+			best_results = candidate_results[:]
+		}
+	}
+
+	if best_rank < 0 {
+		return nil, "", false
+	}
+
+	return best_results, best_pkg, true
+}
+
 get_locals_for_range_stmt :: proc(
 	file: ast.File,
 	stmt: ast.Range_Stmt,
@@ -695,6 +812,33 @@ get_locals_for_range_stmt :: proc(
 	}
 
 	if ok {
+		if result_types, result_pkg, has_operator := get_operator_in_result_types(ast_context, symbol, len(stmt.vals));
+		   has_operator {
+			for val, i in stmt.vals {
+				if i >= len(result_types) {
+					break
+				}
+				if ident, ok := unwrap_ident(val); ok {
+					local_type := result_types[i]
+					if _, is_unary := val.derived.(^ast.Unary_Expr); is_unary {
+						local_type = make_pointer_ast(ast_context, local_type)
+					}
+					store_local(
+						ast_context,
+						ident,
+						local_type,
+						ident.pos.offset,
+						ident.name,
+						ast_context.non_mutable_only,
+						false,
+						{.Mutable},
+						result_pkg,
+						false,
+					)
+				}
+			}
+		}
+
 		#partial switch v in symbol.value {
 		case SymbolProcedureValue:
 			calls := make(map[int]struct{}, context.temp_allocator)
