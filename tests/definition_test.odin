@@ -273,7 +273,27 @@ ast_goto_shadowed_value_decls :: proc(t: ^testing.T) {
 		`,
 		packages = {},
 	}
-	test.expect_definition_locations(t, &source3, {{range = {{line = 2, character = 4}, {line = 2, character = 7}}}})
+test.expect_definition_locations(t, &source3, {{range = {{line = 2, character = 4}, {line = 2, character = 7}}}})
+}
+
+@(test)
+ast_goto_unresolved_call_multi_value_decl_local :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+main :: proc() {
+	slot_idx, found := does_not_exist()
+	if fo{*}und {
+		_ = slot_idx
+	}
+}
+`,
+	}
+
+	location := common.Location {
+		range = {start = {line = 2, character = 11}, end = {line = 2, character = 16}},
+	}
+
+	test.expect_definition_locations(t, &source, {location})
 }
 
 @(test)
@@ -778,6 +798,44 @@ ast_goto_package_declaration_with_alias :: proc(t: ^testing.T) {
 
 	test.expect_definition_locations(t, &source, locations[:])
 }
+
+@(test)
+ast_goto_selector_reexported_through_package_alias :: proc(t: ^testing.T) {
+	packages := make([dynamic]test.Package, context.temp_allocator)
+
+	append(&packages, test.Package {
+		pkg = "bitlib",
+		source = `package bitlib
+			count_leading_zeros :: proc(x: int) -> int {
+				return x
+			}
+		`,
+	})
+	append(&packages, test.Package {
+		pkg = "rt",
+		source = `package rt
+			using import bitlib "bitlib"
+		`,
+	})
+
+	source := test.Source {
+		main = `package test
+		import rt "rt"
+
+		main :: proc() {
+			x := 1
+			rt.count_leading_zeros{*}(x)
+		}
+	`,
+		packages = packages[:],
+	}
+	locations := []common.Location {
+		{range = {start = {line = 1, character = 3}, end = {line = 1, character = 22}}},
+	}
+
+	test.expect_definition_locations(t, &source, locations[:])
+}
+
 @(test)
 ast_goto_proc_group_overload_with_selector :: proc(t: ^testing.T) {
 	packages := make([dynamic]test.Package, context.temp_allocator)
