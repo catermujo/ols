@@ -549,7 +549,7 @@ read_ols_initialize_options :: proc(config: ^common.Config, ols_config: OlsConfi
 	for it in ols_config.collections {
 		forward_path, _ := filepath.replace_separators(it.path, '/', context.temp_allocator)
 
-		forward_path = common.resolve_home_dir(forward_path, context.temp_allocator)
+		forward_path, _ = common.resolve_home_dir(forward_path, context.temp_allocator)
 
 		final_path := ""
 
@@ -691,7 +691,7 @@ request_initialize :: proc(
 	config: ^common.Config,
 	writer: ^Writer,
 ) -> common.Error {
-	params_object, ok := params.(json.Object)
+	_, ok := params.(json.Object)
 
 	if !ok {
 		return .ParseError
@@ -752,7 +752,8 @@ request_initialize :: proc(
 		}
 		ols_config: OlsConfig
 
-		json_err := json.unmarshal(data, &ols_config, allocator = context.temp_allocator)
+		safe_data := ensure_valid_utf8(string(data), context.temp_allocator)
+		json_err := json.unmarshal_string(safe_data, &ols_config, allocator = context.temp_allocator)
 		if json_err == nil {
 			read_ols_initialize_options(config, ols_config, uri)
 			ok = true
@@ -920,7 +921,7 @@ get_builtin_path :: proc(allocator := context.allocator) -> string {
 	}
 	env_var_name :: "OLS_BUILTIN_FOLDER"
 	if env := os.get_env(env_var_name, context.temp_allocator); env != "" {
-		env = common.resolve_home_dir(env, context.temp_allocator)
+		env, _ = common.resolve_home_dir(env, context.temp_allocator)
 		append(&search_paths, env)
 	}
 	for path in search_paths {
@@ -987,7 +988,7 @@ request_definition :: proc(
 	config: ^common.Config,
 	writer: ^Writer,
 ) -> common.Error {
-	params_object, ok := params.(json.Object)
+	_, ok := params.(json.Object)
 
 	if !ok {
 		return .ParseError
@@ -1658,13 +1659,7 @@ request_references :: proc(
 
 	reference_param: ReferenceParams
 
-	// Due to the field named `context`, we need to use json tags and this is the easiest way to handle that right now.
-	data, err := json.marshal(params_object)
-	if err != nil {
-		return .ParseError
-	}
-
-	if err := json.unmarshal(data, &reference_param, allocator = context.temp_allocator); err != nil {
+	if unmarshal(params, reference_param, context.temp_allocator) != nil {
 		return .ParseError
 	}
 
@@ -1678,7 +1673,7 @@ request_references :: proc(
 	locations, ok = get_references(
 		document,
 		reference_param.position,
-		include_declaration = reference_param.ctx.includeDeclaration,
+		include_declaration = reference_param.context_.includeDeclaration,
 	)
 
 	if !ok {

@@ -618,7 +618,7 @@ ReferenceContext :: struct {
 ReferenceParams :: struct {
 	textDocument: TextDocumentIdentifier,
 	position:     common.Position,
-	ctx:          ReferenceContext `json:"context"`,
+	context_:     ReferenceContext,
 }
 
 HighlightParams :: struct {
