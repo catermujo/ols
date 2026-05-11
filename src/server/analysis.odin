@@ -1882,7 +1882,12 @@ resolve_selector_expression :: proc(ast_context: ^AstContext, node: ^ast.Selecto
 			try_build_package(ast_context.current_package)
 
 			if node.field != nil {
-				field_symbol, ok := lookup(node.field.name, selector.pkg, node.pos.file)
+				field_symbol, ok := lookup_package_field_symbol(
+					ast_context,
+					node.field.name,
+					selector.pkg,
+					node.pos.file,
+				)
 				if ok {
 					if pkg_alias_symbol, ok := resolve_field_through_package_alias(
 						ast_context,
@@ -1985,6 +1990,39 @@ resolve_field_through_package_alias :: proc(
 	pkg_symbol, pkg_ok := resolve_ident_as_package(ast_context, ident, context_pkg)
 	if pkg_ok && pkg_symbol.type == .Package {
 		return pkg_symbol, true
+	}
+
+	return {}, false
+}
+
+lookup_package_field_symbol :: proc(
+	ast_context: ^AstContext,
+	field_name: string,
+	context_pkg: string,
+	current_file: string,
+) -> (
+	Symbol,
+	bool,
+) {
+	_ = ast_context
+
+	if field_name == "" || context_pkg == "" {
+		return {}, false
+	}
+
+	if field_symbol, ok := lookup(field_name, context_pkg, current_file); ok {
+		return field_symbol, true
+	}
+
+	pkg, ok := indexer.index.collection.packages[context_pkg]
+	if !ok {
+		return {}, false
+	}
+
+	for using_pkg in pkg.using_imports {
+		if field_symbol, ok := lookup(field_name, using_pkg, current_file); ok {
+			return field_symbol, true
+		}
 	}
 
 	return {}, false
@@ -3575,7 +3613,7 @@ resolve_location_symbol_selector :: proc(
 		}
 		return {}, false
 	case SymbolPackageValue:
-		if pkg, ok := lookup(field, symbol.pkg, symbol.uri); ok {
+		if pkg, ok := lookup_package_field_symbol(ast_context, field, symbol.pkg, selector.pos.file); ok {
 			symbol.range = pkg.range
 			symbol.uri = pkg.uri
 			return symbol, true
@@ -3662,7 +3700,7 @@ resolve_symbol_selector :: proc(
 			}
 		}
 	case SymbolPackageValue:
-		if pkg, ok := lookup(field, symbol.pkg, symbol.uri); ok {
+		if pkg, ok := lookup_package_field_symbol(ast_context, field, symbol.pkg, selector.pos.file); ok {
 			symbol.range = pkg.range
 			symbol.uri = pkg.uri
 		} else {

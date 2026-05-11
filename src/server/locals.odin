@@ -375,7 +375,7 @@ get_locals_value_decl :: proc(file: ast.File, value_decl: ast.Value_Decl, ast_co
 		get_generic_assignment(file, value, ast_context, &results, &calls, flags, value_decl.is_mutable)
 	}
 
-	if len(results) == 0 {
+	if len(results) == 0 && len(value_decl.values) == 0 {
 		return
 	}
 
@@ -386,8 +386,17 @@ get_locals_value_decl :: proc(file: ast.File, value_decl: ast.Value_Decl, ast_co
 		}
 		str := get_ast_node_string(name, file.src)
 		flags: bit_set[LocalFlag]
-
-		expr := results[result_i]
+		expr: ^ast.Expr
+		if len(results) > 0 {
+			result_i := min(len(results) - 1, i)
+			expr = results[result_i]
+		} else if len(value_decl.values) > 0 {
+			value_i := min(len(value_decl.values) - 1, i)
+			expr = value_decl.values[value_i]
+		}
+		if expr == nil {
+			continue
+		}
 		value_expr: ^ast.Expr
 		if is_variable_declaration(expr) {
 			flags |= {.Variable}
@@ -408,7 +417,7 @@ get_locals_value_decl :: proc(file: ast.File, value_decl: ast.Value_Decl, ast_co
 			ast_context.non_mutable_only,
 			false, // calls[result_i] or_else false, // TODO: find a good way to handle this
 			flags,
-			get_package_from_node(results[result_i]^),
+			get_package_from_node(expr^),
 			false,
 			value_decl.type,
 			value_expr,
@@ -1368,6 +1377,7 @@ get_locals :: proc(
 	for stmt in block.stmts {
 		get_locals_stmt(file, stmt, ast_context, document_position)
 	}
+
 }
 
 clear_locals :: proc(ast_context: ^AstContext) {

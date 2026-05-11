@@ -36,6 +36,7 @@ SymbolPackage :: struct {
 	objc_structs:       map[string]ObjcStruct, //mapping from struct name to function
 	methods:            map[Method][dynamic]Symbol,
 	imports:            [dynamic]string, //Used for references to figure whether the package is even able to reference the symbol
+	using_imports:      [dynamic]string, //Package imports marked with `using import`, used for selector re-exports.
 	proc_group_members: map[string]bool, // Tracks procedure names that are part of proc groups (used by fake methods)
 	doc:                map[string]string, // Tracks package doc strings in the file, indexed by the file uri
 	comment:            map[string]string, // Tracks package comments in the file, indexed by file uri
@@ -496,6 +497,8 @@ get_or_create_package :: proc(collection: ^SymbolCollection, pkg_name: string) -
 		pkg.symbols = make(map[string]Symbol, 100, collection.allocator)
 		pkg.methods = make(map[Method][dynamic]Symbol, 100, collection.allocator)
 		pkg.objc_structs = make(map[string]ObjcStruct, 5, collection.allocator)
+		pkg.imports = make([dynamic]string, 0, 8, collection.allocator)
+		pkg.using_imports = make([dynamic]string, 0, 8, collection.allocator)
 		pkg.proc_group_members = make(map[string]bool, 10, collection.allocator)
 		pkg.doc = make(map[string]string, collection.allocator)
 		pkg.comment = make(map[string]string, collection.allocator)
@@ -675,13 +678,76 @@ collect_objc :: proc(collection: ^SymbolCollection, attributes: []^ast.Attribute
 	}
 }
 
-collect_imports :: proc(collection: ^SymbolCollection, file: ast.File, directory: string) {
-	_pkg := get_index_unique_string(collection, directory)
+append_unique_import_path :: proc(imports: ^[dynamic]string, value: string) {
+	for existing in imports[:] {
+		if existing == value {
+			return
+		}
+	}
+	append(imports, value)
+}
 
-	if _pkg, ok := collection.packages[_pkg]; ok {
-
+get_import_alias_name :: proc(imp: ^ast.Import_Decl) -> string {
+	if imp.name.text != "" {
+		return imp.name.text
 	}
 
+	if len(imp.fullpath) < 2 {
+		return ""
+	}
+
+	if i := strings.index(imp.fullpath, ":"); i != -1 && i != len(imp.fullpath) - 1 {
+		return path.base(imp.fullpath[i + 1:len(imp.fullpath) - 1], false, context.temp_allocator)
+	}
+
+	return path.base(imp.fullpath[1:len(imp.fullpath) - 1], false, context.temp_allocator)
+}
+
+collect_imports :: proc(collection: ^SymbolCollection, file: ast.File, directory: string, pkg_name: string) {
+	pkg := get_or_create_package(collection, pkg_name)
+	package_map := get_package_mapping(file, collection.config, directory)
+
+	for imp in file.imports {
+		alias_name := get_import_alias_name(imp)
+		if alias_name == "" {
+			continue
+		}
+
+		import_path, ok := package_map[alias_name]
+		if !ok {
+			continue
+		}
+
+		import_path = get_index_unique_string(collection, import_path)
+
+		append_unique_import_path(&pkg.imports, import_path)
+
+		if imp.is_using {
+			append_unique_import_path(&pkg.using_imports, import_path)
+		}
+	}
+}
+
+@(private = "file")
+is_builtin_intrinsics_uri :: proc(uri: string) -> bool {
+	// Builtin copy that ships with ols.
+	if strings.has_suffix(uri, "/builtin/intrinsics.odin") {
+		return true
+	}
+
+	base_dir, has_base := common.config.collections["base"]
+	if !has_base || base_dir == "" {
+		return false
+	}
+
+	base_intrinsics := path.join(
+		elems = {base_dir, "intrinsics", "intrinsics.odin"},
+		allocator = context.temp_allocator,
+	)
+	base_intrinsics, _ = filepath.replace_separators(base_intrinsics, '/', context.temp_allocator)
+	base_intrinsics_uri := common.create_uri(base_intrinsics, context.temp_allocator).uri
+
+	return strings.equal_fold(uri, base_intrinsics_uri)
 }
 
 @(private = "file")
@@ -695,9 +761,9 @@ get_symbol_package_name :: proc(
 		return "$builtin"
 	}
 
-	if strings.contains(uri, "intrinsics.odin") {
+	if is_builtin_intrinsics_uri(uri) {
 		intrinsics_path, _ := filepath.join(
-			elems = {common.config.collections["base"], "/intrinsics"},
+			elems = {common.config.collections["base"], "intrinsics"},
 			allocator = context.temp_allocator,
 		)
 		intrinsics_path, _ = filepath.replace_separators(intrinsics_path, '/', context.temp_allocator)
@@ -972,7 +1038,7 @@ collect_symbols :: proc(collection: ^SymbolCollection, file: ast.File, uri: stri
 		collect_fake_methods(collection, exprs, directory, uri)
 	}
 
-	collect_imports(collection, file, directory)
+	collect_imports(collection, file, directory, file_pkg_name)
 
 
 	return .None
