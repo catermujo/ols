@@ -170,7 +170,6 @@ get_generic_assignment :: proc(
 	case ^ast.Or_Branch_Expr:
 		get_generic_assignment(file, v.expr, ast_context, results, calls, flags, is_mutable)
 	case ^ast.Call_Expr:
-
 		old_call := ast_context.call
 		ast_context.call = cast(^ast.Call_Expr)value
 		defer ast_context.call = old_call
@@ -403,7 +402,7 @@ get_locals_value_decl :: proc(file: ast.File, value_decl: ast.Value_Decl, ast_co
 		get_generic_assignment(file, value, ast_context, &results, &calls, flags, value_decl.is_mutable)
 	}
 
-	if len(results) == 0 {
+	if len(results) == 0 && len(value_decl.values) == 0 {
 		return
 	}
 
@@ -414,9 +413,18 @@ get_locals_value_decl :: proc(file: ast.File, value_decl: ast.Value_Decl, ast_co
 		if .SameLhsRhsCount in flags && len(result_starts) > i {
 			result_i = min(len(results) - 1, result_starts[i])
 		}
-		expr := results[result_i]
-
 		flags: bit_set[LocalFlag]
+		expr: ^ast.Expr
+		if len(results) > 0 {
+			result_i := min(len(results) - 1, i)
+			expr = results[result_i]
+		} else if len(value_decl.values) > 0 {
+			value_i := min(len(value_decl.values) - 1, i)
+			expr = value_decl.values[value_i]
+		}
+		if expr == nil {
+			continue
+		}
 		value_expr: ^ast.Expr
 
 		if is_variable_declaration(expr) {
@@ -1470,6 +1478,7 @@ get_function_locals :: proc(
 	for stmt in block.stmts {
 		get_locals_stmt(file, stmt, ast_context, document_position)
 	}
+
 }
 
 clear_locals :: proc(ast_context: ^AstContext) {
