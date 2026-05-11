@@ -528,6 +528,12 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config) {
 			}
 
 			uri := common.create_uri(path, context.temp_allocator)
+			start_character := max(error.pos.column - 1, 0)
+			end_character := max(error.pos.end_column - 1, 0)
+			if end_character <= start_character {
+				end_character = start_character + 1
+			}
+			line := max(error.pos.line - 1, 0)
 
 			add_diagnostics(
 				.Check,
@@ -536,9 +542,9 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config) {
 					code = "checker",
 					severity = map_diagnostic_severity(error.type),
 					range = {
-						// odin will sometimes report errors on column 0, so we ensure we don't provide a negative column/line to the client
-						start = {character = max(error.pos.column - 1, 0), line = max(error.pos.line - 1, 0)},
-						end = {character = max(error.pos.end_column - 1, 0), line = max(error.pos.line - 1, 0)},
+						// Odin can report column 0 or zero-width spans; normalize for valid, visible LSP ranges.
+						start = {character = start_character, line = line},
+						end = {character = end_character, line = line},
 					},
 					message = message,
 				},
