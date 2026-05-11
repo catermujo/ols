@@ -31,7 +31,7 @@ lookup_in_path :: proc(name: string) -> (string, bool) {
 			}
 		} else {
 			possibility, _ := filepath.join(elems = {directory, name}, allocator = context.temp_allocator)
-			possibility = resolve_home_dir(possibility, context.temp_allocator)
+				possibility, _ = resolve_home_dir(possibility, context.temp_allocator)
 			if os.exists(possibility) {
 				if info, err := os.stat(possibility, context.temp_allocator);
 				   err == os.ERROR_NONE && .Execute_User in info.mode {
@@ -50,7 +50,7 @@ resolve_home_dir :: proc(
 ) -> (
 	resolved: string,
 	allocated: bool,
-) #optional_ok {
+) {
 	when ODIN_OS == .Windows {
 		return path, false
 	} else {
