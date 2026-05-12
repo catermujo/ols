@@ -133,6 +133,7 @@ run_check_consumer :: proc(c: Consumer) {
 		if !ok {
 			break
 		}
+		progress_setup_current_thread(c.w)
 
 		paths := make([dynamic]string, allocator = context.temp_allocator)
 		append(&paths, request.path)
@@ -347,6 +348,7 @@ resolve_check_paths :: proc(mode: Check_Mode, paths: []string, config: ^common.C
 }
 
 CheckProcess :: struct {
+	path:     string,
 	process:  os.Process,
 	reader:   ^os.File,
 	finished: bool,
@@ -366,6 +368,27 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config) {
 			)
 		}
 		return
+	}
+
+	timed_out := false
+	check_progress_token := ""
+	completed_checks := 0
+
+	if mode == .Saved {
+		progress_title := "Rechecking package"
+		progress_message := fmt.tprintf("Checking %s", filepath.base(paths[0]))
+
+		if len(paths) > 1 {
+			progress_title = fmt.tprintf("Rechecking %d packages", len(paths))
+			progress_message = fmt.tprintf("Checking 1 of %d packages", len(paths))
+		}
+
+		check_progress_token = progress_task_begin(
+			"OLS_RECHECK_SAVE",
+			progress_title,
+			progress_message,
+			0,
+		)
 	}
 
 	if common.config.verbose {
@@ -396,7 +419,6 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config) {
 	next_index := 0
 	running_count := 0
 	start := time.now()
-	timed_out := false
 
 	for running_count > 0 || next_index < len(paths) {
 		for running_count < max_concurrent_checks && next_index < len(paths) {
@@ -408,6 +430,9 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config) {
 			}
 			append(&processes, p)
 			running_count += 1
+			if check_progress_token != "" {
+				progress_report(check_progress_token, fmt.tprintf("Checking %s", filepath.base(check_path)))
+			}
 			if common.config.verbose {
 				log.infof(
 					"check process started: mode=%s path=%q running=%v max=%v",
@@ -465,15 +490,25 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config) {
 				}
 			}
 
-				os.close(p.reader)
-				p.reader = nil
+			os.close(p.reader)
+			p.reader = nil
 
-				if len(p.buffer) > 0 {
-					if json_errors, ok := decode_check_results(p.buffer[:], context.temp_allocator); ok {
-						append(&errors, json_errors)
-					}
+			completed_checks += 1
+			if check_progress_token != "" {
+				percentage := (completed_checks * 100) / len(paths)
+				progress_report(
+					check_progress_token,
+					fmt.tprintf("Checked %s (%d/%d)", filepath.base(p.path), completed_checks, len(paths)),
+					percentage,
+				)
+			}
+
+			if len(p.buffer) > 0 {
+				if json_errors, ok := decode_check_results(p.buffer[:], context.temp_allocator); ok {
+					append(&errors, json_errors)
 				}
 			}
+		}
 
 		if running_count > 0 || next_index < len(paths) {
 			time.sleep(1 * time.Millisecond)
@@ -552,6 +587,20 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config) {
 		}
 	}
 
+	if check_progress_token != "" {
+		if timed_out {
+			progress_end(
+				check_progress_token,
+				fmt.tprintf("Recheck timed out (%d/%d)", completed_checks, len(paths)),
+			)
+		} else {
+			progress_end(
+				check_progress_token,
+				fmt.tprintf("Recheck done (%d/%d)", completed_checks, len(paths)),
+			)
+		}
+	}
+
 	if common.config.verbose {
 		log.infof(
 			"check done: mode=%s resolved_paths=%v diagnostics=%v timed_out=%v elapsed_ms=%v",
@@ -619,7 +668,7 @@ start_check_process :: proc(
 	}
 
 	buffer := make([dynamic]u8, 0, mem.Kilobyte * 200, context.temp_allocator)
-	return CheckProcess{process = p, reader = r, buffer = buffer}, true
+	return CheckProcess{path = check_path, process = p, reader = r, buffer = buffer}, true
 }
 
 @(private = "file")
