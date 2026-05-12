@@ -43,6 +43,7 @@ Check_Request :: struct {
 	check_mode: Check_Mode,
 	path:       string,
 	config:     ^common.Config,
+	progress_token: string,
 }
 
 Checker :: struct {
@@ -71,7 +72,7 @@ check_mode_to_string :: proc(mode: Check_Mode) -> string {
 	return "unknown"
 }
 
-queue_check_request :: proc(mode: Check_Mode, path: string, config: ^common.Config) {
+queue_check_request :: proc(mode: Check_Mode, path: string, config: ^common.Config, progress_token := "") {
 	check_enqueue_count += 1
 	enqueue_count := check_enqueue_count
 	if common.config.verbose {
@@ -84,9 +85,19 @@ queue_check_request :: proc(mode: Check_Mode, path: string, config: ^common.Conf
 	}
 
 	path := strings.clone(path, checker.allocator)
-	ok := chan.try_send(checker.send, Check_Request{check_mode = mode, path = path, config = config})
+	progress_token := strings.clone(progress_token, checker.allocator)
+	ok := chan.try_send(
+		checker.send,
+		Check_Request {
+			check_mode = mode,
+			path = path,
+			config = config,
+			progress_token = progress_token,
+		},
+	)
 	if !ok {
 		delete(path, checker.allocator)
+		delete(progress_token, checker.allocator)
 		if common.config.verbose {
 			log.warnf(
 				"Dropped check request #%v mode=%s because check queue is full",
@@ -106,7 +117,6 @@ stop_check_worker :: proc() {
 }
 
 create_and_start_check_worker :: proc(writer: ^Writer) {
-	allocator := runtime.heap_allocator()
 	check_chan, _ := chan.create(chan.Chan(Check_Request), 8, context.allocator)
 	check_send := chan.as_send(check_chan)
 	checker = Checker {
@@ -135,26 +145,75 @@ run_check_consumer :: proc(c: Consumer) {
 		}
 		progress_setup_current_thread(c.w)
 
-		paths := make([dynamic]string, allocator = context.temp_allocator)
-		append(&paths, request.path)
+		saved_paths := make([dynamic]string, allocator = context.temp_allocator)
+		workspace_paths := make([dynamic]string, allocator = context.temp_allocator)
+		saved_progress_tokens := make([dynamic]string, allocator = context.temp_allocator)
+		workspace_progress_tokens := make([dynamic]string, allocator = context.temp_allocator)
 
-		for request in chan.try_recv(c.ch) {
-			append(&paths, request.path)
+		saved_config := request.config
+		workspace_config := request.config
+
+		switch request.check_mode {
+		case .Saved:
+			saved_config = request.config
+			append(&saved_paths, request.path)
+			if request.progress_token != "" {
+				append(&saved_progress_tokens, request.progress_token)
+			}
+		case .Workspace:
+			workspace_config = request.config
+			append(&workspace_paths, request.path)
+			if request.progress_token != "" {
+				append(&workspace_progress_tokens, request.progress_token)
+			}
+		}
+
+		for req in chan.try_recv(c.ch) {
+			switch req.check_mode {
+			case .Saved:
+				saved_config = req.config
+				append(&saved_paths, req.path)
+				if req.progress_token != "" {
+					append(&saved_progress_tokens, req.progress_token)
+				}
+			case .Workspace:
+				workspace_config = req.config
+				append(&workspace_paths, req.path)
+				if req.progress_token != "" {
+					append(&workspace_progress_tokens, req.progress_token)
+				}
+			}
 		}
 
 		if common.config.verbose {
 			log.infof(
-				"check consumer batch: mode=%s requests=%v first_path=%q",
-				check_mode_to_string(request.check_mode),
-				len(paths),
-				request.path,
+				"check consumer batch: saved_requests=%v workspace_requests=%v",
+				len(saved_paths),
+				len(workspace_paths),
 			)
 		}
 
-		check(request.check_mode, paths[:], request.config)
-		push_diagnostics(c.w)
-		for path in paths {
+		if len(saved_paths) > 0 {
+			check(.Saved, saved_paths[:], saved_config, saved_progress_tokens[:])
+			push_diagnostics(c.w)
+		}
+
+		if len(workspace_paths) > 0 {
+			check(.Workspace, workspace_paths[:], workspace_config, workspace_progress_tokens[:])
+			push_diagnostics(c.w)
+		}
+
+		for path in saved_paths {
 			delete(path, checker.allocator)
+		}
+		for path in workspace_paths {
+			delete(path, checker.allocator)
+		}
+		for token in saved_progress_tokens {
+			delete(token, checker.allocator)
+		}
+		for token in workspace_progress_tokens {
+			delete(token, checker.allocator)
 		}
 		free_all(context.temp_allocator)
 	}
@@ -328,14 +387,20 @@ resolve_check_paths :: proc(mode: Check_Mode, paths: []string, config: ^common.C
 
 	if mode == .Saved || config.enable_checker_only_saved {
 		results := make([dynamic]string, context.temp_allocator)
+		seen := make(map[string]struct{}, context.temp_allocator)
 		for p in paths {
 			if p == "" {
 				continue
 			}
 			dir := path.dir(p, context.temp_allocator)
-			if dir not_in config.checker_skip_packages {
-				append(&results, dir)
+			if dir in config.checker_skip_packages {
+				continue
 			}
+			if dir in seen {
+				continue
+			}
+			seen[dir] = {}
+			append(&results, dir)
 		}
 		return results[:]
 	}
@@ -355,7 +420,7 @@ CheckProcess :: struct {
 	buffer:   [dynamic]u8,
 }
 
-check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config) {
+check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config, progress_tokens: []string = {}) {
 	check_start := time.now()
 	paths := resolve_check_paths(mode, check_paths, config)
 
@@ -374,21 +439,33 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config) {
 	check_progress_token := ""
 	completed_checks := 0
 
+	if len(progress_tokens) > 0 {
+		check_progress_token = progress_tokens[0]
+	}
+
 	if mode == .Saved {
-		progress_title := "Rechecking package"
-		progress_message := fmt.tprintf("Checking %s", filepath.base(paths[0]))
+		if check_progress_token == "" {
+			progress_title := "Rechecking package"
+			progress_message := fmt.tprintf("Checking %s", filepath.base(paths[0]))
 
-		if len(paths) > 1 {
-			progress_title = fmt.tprintf("Rechecking %d packages", len(paths))
-			progress_message = fmt.tprintf("Checking 1 of %d packages", len(paths))
+			if len(paths) > 1 {
+				progress_title = fmt.tprintf("Rechecking %d packages", len(paths))
+				progress_message = fmt.tprintf("Checking 1 of %d packages", len(paths))
+			}
+
+			check_progress_token = progress_task_begin(
+				"OLS_RECHECK_SAVE",
+				progress_title,
+				progress_message,
+				0,
+			)
+		} else {
+			progress_report(
+				check_progress_token,
+				fmt.tprintf("Checking 1 of %d packages", len(paths)),
+				0,
+			)
 		}
-
-		check_progress_token = progress_task_begin(
-			"OLS_RECHECK_SAVE",
-			progress_title,
-			progress_message,
-			0,
-		)
 	}
 
 	if common.config.verbose {
@@ -588,16 +665,21 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config) {
 	}
 
 	if check_progress_token != "" {
+		end_message := ""
 		if timed_out {
-			progress_end(
-				check_progress_token,
-				fmt.tprintf("Recheck timed out (%d/%d)", completed_checks, len(paths)),
-			)
+			end_message = fmt.tprintf("Recheck timed out (%d/%d)", completed_checks, len(paths))
 		} else {
-			progress_end(
-				check_progress_token,
-				fmt.tprintf("Recheck done (%d/%d)", completed_checks, len(paths)),
-			)
+			end_message = fmt.tprintf("Recheck done (%d/%d)", completed_checks, len(paths))
+		}
+		progress_end(check_progress_token, end_message)
+
+		if len(progress_tokens) > 1 {
+			for token in progress_tokens[1:] {
+				if token == "" {
+					continue
+				}
+				progress_end(token, end_message)
+			}
 		}
 	}
 
