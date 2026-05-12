@@ -1,6 +1,7 @@
 package server
 
 import "core:fmt"
+import "core:sync"
 
 Progress_State :: struct {
 	enabled:       bool,
@@ -8,13 +9,32 @@ Progress_State :: struct {
 	next_token_id: int,
 }
 
+@(private = "file")
+progress_capability_enabled: bool
+
+@(private = "file")
+progress_capability_mutex: sync.Mutex
+
 @(thread_local)
 progress_state: Progress_State
 
 progress_setup :: proc(enabled: bool, writer: ^Writer) {
+	sync.mutex_lock(&progress_capability_mutex)
+	progress_capability_enabled = enabled
+	sync.mutex_unlock(&progress_capability_mutex)
+
 	progress_state.enabled = enabled && writer != nil
 	progress_state.writer = writer
 	progress_state.next_token_id = 0
+}
+
+progress_setup_current_thread :: proc(writer: ^Writer) {
+	sync.mutex_lock(&progress_capability_mutex)
+	enabled := progress_capability_enabled
+	sync.mutex_unlock(&progress_capability_mutex)
+
+	progress_state.enabled = enabled && writer != nil
+	progress_state.writer = writer
 }
 
 progress_available :: proc() -> bool {
