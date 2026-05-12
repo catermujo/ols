@@ -1321,7 +1321,13 @@ notification_did_save :: proc(
 
 	push_diagnostics(writer)
 
-	queue_check_request(.Saved, corrected_uri.path, config)
+	save_check_progress := progress_task_begin(
+		"OLS_RECHECK_SAVE",
+		"Rechecking package",
+		fmt.tprintf("Queued %s", filepath.base(corrected_uri.path)),
+		0,
+	)
+	queue_check_request(.Saved, corrected_uri.path, config, save_check_progress)
 
 	return .None
 }
