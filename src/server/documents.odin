@@ -37,6 +37,8 @@ Document :: struct {
 	fullpath:         string,
 	text:             []u8,
 	used_text:        int, //allow for the text to be reallocated with more data than needed
+	last_saved_check_fingerprint:     u64,
+	last_saved_check_fingerprint_set: bool,
 	client_owned:     bool,
 	diagnosed_errors: bool,
 	ast:              ast.File,
@@ -133,6 +135,8 @@ document_open :: proc(uri_string: string, text: string, config: ^common.Config, 
 		document.client_owned = true
 		document.text = transmute([]u8)text
 		document.used_text = len(document.text)
+		document.last_saved_check_fingerprint = 0
+		document.last_saved_check_fingerprint_set = false
 		document.allocator = document_get_allocator()
 
 		document_setup(document)
@@ -305,6 +309,8 @@ document_close :: proc(uri_string: string) -> common.Error {
 	delete(document.package_name)
 
 	document.used_text = 0
+	document.last_saved_check_fingerprint = 0
+	document.last_saved_check_fingerprint_set = false
 
 	return .None
 }
