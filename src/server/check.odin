@@ -85,19 +85,22 @@ queue_check_request :: proc(mode: Check_Mode, path: string, config: ^common.Conf
 	}
 
 	path := strings.clone(path, checker.allocator)
-	progress_token := strings.clone(progress_token, checker.allocator)
+	progress_token_copy := strings.clone(progress_token, checker.allocator)
 	ok := chan.try_send(
 		checker.send,
 		Check_Request {
 			check_mode = mode,
 			path = path,
 			config = config,
-			progress_token = progress_token,
+			progress_token = progress_token_copy,
 		},
 	)
 	if !ok {
 		delete(path, checker.allocator)
-		delete(progress_token, checker.allocator)
+		delete(progress_token_copy, checker.allocator)
+		if progress_token != "" {
+			progress_end(progress_token, "Recheck dropped (queue full)")
+		}
 		if common.config.verbose {
 			log.warnf(
 				"Dropped check request #%v mode=%s because check queue is full",
@@ -425,6 +428,14 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config, p
 	paths := resolve_check_paths(mode, check_paths, config)
 
 	if len(paths) == 0 {
+		if len(progress_tokens) > 0 {
+			for token in progress_tokens {
+				if token == "" {
+					continue
+				}
+				progress_end(token, "Recheck skipped (0/0)")
+			}
+		}
 		if common.config.verbose {
 			log.infof(
 				"check skipped: mode=%s input_paths=%v resolved_paths=0",

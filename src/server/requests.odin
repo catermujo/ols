@@ -1277,6 +1277,16 @@ notification_did_close :: proc(
 	return .None
 }
 
+save_check_content_fingerprint :: proc(text: string) -> u64 {
+	hash: u64 = 14695981039346656037
+	for i in 0..<len(text) {
+		hash = hash ~ u64(text[i])
+		hash *= 1099511628211
+	}
+	hash = hash ~ u64(len(text))
+	return hash
+}
+
 notification_did_save :: proc(
 	params: json.Value,
 	id: RequestId,
@@ -1301,7 +1311,17 @@ notification_did_save :: proc(
 		return .ParseError
 	}
 
-	if result := index_file(uri, save_params.text); result != .None {
+	document := document_get(save_params.textDocument.uri)
+	if document != nil {
+		defer document_release(document)
+	}
+
+	save_text := save_params.text
+	if "text" not_in params_object && document != nil {
+		save_text = string(document.text[:document.used_text])
+	}
+
+	if result := index_file(uri, save_text); result != .None {
 		return result
 	}
 
@@ -1314,20 +1334,32 @@ notification_did_save :: proc(
 
 	corrected_uri := common.create_uri(fullpath, context.temp_allocator)
 
-	document := document_get(save_params.textDocument.uri)
 	if document != nil {
 		check_unused_imports(document, config)
 	}
 
 	push_diagnostics(writer)
 
-	save_check_progress := progress_task_begin(
-		"OLS_RECHECK_SAVE",
-		"Rechecking package",
-		fmt.tprintf("Queued %s", filepath.base(corrected_uri.path)),
-		0,
-	)
-	queue_check_request(.Saved, corrected_uri.path, config, save_check_progress)
+	should_queue_save_check := true
+	if document != nil {
+		fingerprint := save_check_content_fingerprint(save_text)
+		if document.last_saved_check_fingerprint_set &&
+			document.last_saved_check_fingerprint == fingerprint {
+			should_queue_save_check = false
+		}
+		document.last_saved_check_fingerprint = fingerprint
+		document.last_saved_check_fingerprint_set = true
+	}
+
+	if should_queue_save_check {
+		save_check_progress := progress_task_begin(
+			"OLS_RECHECK_SAVE",
+			"Rechecking package",
+			fmt.tprintf("Queued %s", filepath.base(corrected_uri.path)),
+			0,
+		)
+		queue_check_request(.Saved, corrected_uri.path, config, save_check_progress)
+	}
 
 	return .None
 }
