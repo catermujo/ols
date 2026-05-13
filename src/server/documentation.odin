@@ -501,18 +501,26 @@ write_procedure_symbol_signature :: proc(sb: ^strings.Builder, value: SymbolProc
 	write_proc_param_list_and_return(sb, value)
 	write_where_clauses(sb, value.where_clauses)
 	if detailed_signature {
-		for tag in value.tags {
-			s := ""
-			switch tag {
-			case .Optional_Ok:
-				s = "#optional_ok"
-			case .Optional_Allocator_Error:
-				s = "#optional_allocator_error"
-			case .Bounds_Check:
-				s = "#bounds_check"
-			case .No_Bounds_Check:
-				s = "#no_bounds_check"
-			}
+			for tag in value.tags {
+				s := ""
+				switch tag {
+				case .Optional_Ok:
+					s = "#optional_ok"
+				case .Optional_Allocator_Error:
+					s = "#optional_allocator_error"
+				case .Bounds_Check:
+					s = "#bounds_check"
+				case .No_Bounds_Check:
+					s = "#no_bounds_check"
+				case .Type_Assert:
+					s = "#type_assert"
+				case .No_Type_Assert:
+					s = "#no_type_assert"
+				case .Downcast_Assert:
+					s = "#downcast_assert"
+				case .No_Downcast_Assert:
+					s = "#no_downcast_assert"
+				}
 
 			fmt.sbprintf(sb, " %s", s)
 		}
