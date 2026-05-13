@@ -514,6 +514,14 @@ write_procedure_symbol_signature :: proc(sb: ^strings.Builder, value: SymbolProc
 				s = "#bounds_check"
 			case .No_Bounds_Check:
 				s = "#no_bounds_check"
+			case .Type_Assert:
+				s = "#type_assert"
+			case .No_Type_Assert:
+				s = "#no_type_assert"
+			case .Downcast_Assert:
+				s = "#downcast_assert"
+			case .No_Downcast_Assert:
+				s = "#no_downcast_assert"
 			}
 
 			fmt.sbprintf(sb, " %s", s)

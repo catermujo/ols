@@ -916,9 +916,9 @@ get_locals_range_vals :: proc(
 	}
 
 	if ok {
-		if result_types, result_pkg, has_operator := get_operator_in_result_types(ast_context, symbol, len(stmt.vals));
+		if result_types, result_pkg, has_operator := get_operator_in_result_types(ast_context, symbol, len(vals));
 		   has_operator {
-			for val, i in stmt.vals {
+			for val, i in vals {
 				if i >= len(result_types) {
 					break
 				}
