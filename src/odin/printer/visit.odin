@@ -2149,24 +2149,16 @@ visit_struct_field_list :: proc(p: ^Printer, list: ^ast.Field_List, options := L
 @(private)
 visit_proc_tags :: proc(p: ^Printer, proc_tags: ast.Proc_Tags) -> ^Document {
 	document := empty()
-
-	if .Bounds_Check in proc_tags {
-		document = cons_with_opl(document, text("#bounds_check"))
+	append_proc_tag :: proc(doc: ^Document, tag: string) -> ^Document {
+		return cons(doc, if_break(" \\"), break_with_space(), text(tag))
 	}
 
-	if .No_Bounds_Check in proc_tags {
-		document = cons_with_opl(document, text("#no_bounds_check"))
-	}
+	if .Bounds_Check in proc_tags do document = append_proc_tag(document, "#bounds_check")
+	if .No_Bounds_Check in proc_tags do document = append_proc_tag(document, "#no_bounds_check")
+	if .Optional_Ok in proc_tags do document = append_proc_tag(document, "#optional_ok")
+	if .Optional_Allocator_Error in proc_tags do document = append_proc_tag(document, "#optional_allocator_error")
 
-	if .Optional_Ok in proc_tags {
-		document = cons_with_opl(document, text("#optional_ok"))
-	}
-
-	if .Optional_Allocator_Error in proc_tags {
-		document = cons_with_opl(document, text("#optional_allocator_error"))
-	}
-
-	return group(cons_with_nopl(if_break("\\"), document))
+	return group(document)
 }
 
 @(private)
