@@ -562,6 +562,142 @@ ast_goto_enum_from_map_key :: proc(t: ^testing.T) {
 }
 
 @(test)
+ast_goto_field_definition_with_selector_expr_using_cross_file_global :: proc(t: ^testing.T) {
+	source := test.Source {
+		main     = `package test
+
+		use :: proc() {
+			g.particle.splas{*}h
+		}
+		`,
+		packages = {
+			{
+				pkg = "",
+				source = `package test
+
+				GFX :: struct {
+					particle: struct {
+						splash: int,
+					},
+				}
+
+				State :: struct {
+					using _: GFX,
+				}
+
+				g: ^State
+				`,
+			},
+		},
+	}
+
+	location := common.Location {
+		range = {start = {line = 4, character = 6}, end = {line = 4, character = 12}},
+	}
+
+	test.expect_definition_locations(t, &source, {location})
+}
+
+@(test)
+ast_goto_field_definition_with_selector_expr_cross_file_global_no_using :: proc(t: ^testing.T) {
+	source := test.Source {
+		main     = `package test
+
+		use :: proc() {
+			g.particl{*}e.splash
+		}
+		`,
+		packages = {
+			{
+				pkg = "",
+				source = `package test
+
+				State :: struct {
+					particle: struct {
+						splash: int,
+					},
+				}
+
+				g: ^State
+				`,
+			},
+		},
+	}
+
+	location := common.Location {
+		range = {start = {line = 3, character = 5}, end = {line = 3, character = 13}},
+	}
+
+	test.expect_definition_locations(t, &source, {location})
+}
+
+@(test)
+ast_goto_global_definition_cross_file_selector_base :: proc(t: ^testing.T) {
+	source := test.Source {
+		main     = `package test
+
+		use :: proc() {
+			g{*}.particle.splash
+		}
+		`,
+		packages = {
+			{
+				pkg = "",
+				source = `package test
+
+				State :: struct {
+					particle: struct {
+						splash: int,
+					},
+				}
+
+				g: ^State
+				`,
+			},
+		},
+	}
+
+	location := common.Location {
+		range = {start = {line = 8, character = 4}, end = {line = 8, character = 5}},
+	}
+
+	test.expect_definition_locations(t, &source, {location})
+}
+
+@(test)
+ast_goto_nested_field_definition_cross_file_global_no_using :: proc(t: ^testing.T) {
+	source := test.Source {
+		main     = `package test
+
+		use :: proc() {
+			g.particle.splas{*}h
+		}
+		`,
+		packages = {
+			{
+				pkg = "",
+				source = `package test
+
+				State :: struct {
+					particle: struct {
+						splash: int,
+					},
+				}
+
+				g: ^State
+				`,
+			},
+		},
+	}
+
+	location := common.Location {
+		range = {start = {line = 4, character = 6}, end = {line = 4, character = 12}},
+	}
+
+	test.expect_definition_locations(t, &source, {location})
+}
+
+@(test)
 ast_goto_struct_field_from_proc :: proc (t: ^testing.T) {
 	source := test.Source {
 		main     = `package test

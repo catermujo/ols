@@ -383,6 +383,22 @@ to_symbol_struct_value :: proc(b: SymbolStructValueBuilder) -> SymbolStructValue
 	}
 }
 
+get_node_range_for_ast_context :: proc(ast_context: ^AstContext, node: ast.Node) -> common.Range {
+	if node.pos.file == ast_context.file.fullpath {
+		return common.get_token_range(node, ast_context.file.src)
+	}
+
+	start_line := max(node.pos.line - 1, 0)
+	end_line := max(node.end.line - 1, start_line)
+	start_character := max(node.pos.column - 1, 0)
+	end_character := max(node.end.column - 1, start_character)
+
+	return {
+		start = {line = start_line, character = start_character},
+		end = {line = end_line, character = end_character},
+	}
+}
+
 write_struct_type :: proc(
 	ast_context: ^AstContext,
 	b: ^SymbolStructValueBuilder,
@@ -409,7 +425,7 @@ write_struct_type :: proc(
 					append(&b.types, field.type)
 				}
 
-				append(&b.ranges, common.get_token_range(n, ast_context.file.src))
+				append(&b.ranges, get_node_range_for_ast_context(ast_context, n))
 				append(&b.docs, field.docs)
 				append(&b.comments, field.comment)
 				append(&b.from_usings, base_using_index)

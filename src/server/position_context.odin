@@ -675,11 +675,13 @@ get_document_position_node :: proc(node: ^ast.Node, position_context: ^DocumentP
 			   position_context.hint == .TypeDefinition ||
 			   position_context.hint == .Completion) &&
 		   n.field != nil {
-			position_context.selector = n.expr
-			position_context.field = n.field
-			position_context.selector_expr = node
 			get_document_position(n.expr, position_context)
 			get_document_position(n.field, position_context)
+			if position_in_node(n.field, position_context.position) {
+				position_context.selector = n.expr
+				position_context.field = n.field
+				position_context.selector_expr = node
+			}
 		} else {
 			get_document_position(n.expr, position_context)
 			get_document_position(n.field, position_context)
