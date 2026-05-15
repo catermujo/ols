@@ -2029,6 +2029,46 @@ lookup_package_field_symbol :: proc(
 	return {}, false
 }
 
+is_generated_uri :: #force_inline proc(uri: string) -> bool {
+	return strings.contains(uri, ".generated.odin")
+}
+
+lookup_package_import_field_symbol :: proc(
+	field_name: string,
+	context_pkg: string,
+	current_file: string,
+) -> (
+	Symbol,
+	bool,
+) {
+	if field_name == "" || context_pkg == "" {
+		return {}, false
+	}
+
+	pkg, ok := indexer.index.collection.packages[context_pkg]
+	if !ok {
+		return {}, false
+	}
+
+	for import_pkg in pkg.imports {
+		if field_symbol, ok := lookup(field_name, import_pkg, current_file); ok {
+			if !is_generated_uri(field_symbol.uri) {
+				return field_symbol, true
+			}
+		}
+	}
+
+	for using_pkg in pkg.using_imports {
+		if field_symbol, ok := lookup(field_name, using_pkg, current_file); ok {
+			if !is_generated_uri(field_symbol.uri) {
+				return field_symbol, true
+			}
+		}
+	}
+
+	return {}, false
+}
+
 resolve_field_access_through_imported_alias :: proc(
 	ast_context: ^AstContext,
 	ident: ^ast.Ident,
@@ -2167,6 +2207,20 @@ internal_resolve_type_identifier :: proc(ast_context: ^AstContext, node: ast.Ide
 
 				return resolve_symbol_return(ast_context, symbol)
 			}
+		}
+	}
+
+	if is_path_package_name(node.name) {
+		if _, ok := indexer.index.collection.packages[node.name]; ok {
+			symbol := Symbol {
+				type  = .Package,
+				pkg   = node.name,
+				value = SymbolPackageValue{},
+			}
+
+			try_build_package(symbol.pkg)
+
+			return resolve_symbol_return(ast_context, symbol)
 		}
 	}
 
@@ -3184,6 +3238,7 @@ resolve_location_identifier :: proc(ast_context: ^AstContext, node: ast.Ident) -
 	if local, ok := get_local(ast_context^, node); ok {
 		symbol.range = common.get_token_range(local.lhs, ast_context.file.src)
 		uri := common.create_uri(local.lhs.pos.file, ast_context.allocator)
+		symbol.name = node.name
 		symbol.pkg = ast_context.document_package
 		symbol.uri = uri.uri
 		symbol.flags |= {.Local}
@@ -3203,6 +3258,7 @@ resolve_location_identifier :: proc(ast_context: ^AstContext, node: ast.Ident) -
 	if global, ok := ast_context.globals[node.name]; ok {
 		symbol.range = common.get_token_range(global.name_expr, ast_context.file.src)
 		uri := common.create_uri(global.expr.pos.file, ast_context.allocator)
+		symbol.name = node.name
 		symbol.pkg = ast_context.document_package
 		symbol.uri = uri.uri
 		return symbol, true
@@ -3485,8 +3541,46 @@ resolve_alias_symbol_target :: proc(
 		return symbol, false
 	}
 
+	resolve_global_alias_expression_target :: proc(
+		ast_context: ^AstContext,
+		global: GlobalExpr,
+	) -> (
+		Symbol,
+		bool,
+	) {
+		if global.expr == nil {
+			return {}, false
+		}
+
+		set_ast_package_set_scoped(ast_context, ast_context.document_package)
+
+		#partial switch expr in global.expr.derived {
+		case ^ast.Ident:
+			return resolve_location_identifier(ast_context, expr^)
+		case ^ast.Selector_Expr:
+			return resolve_location_selector(ast_context, &expr.node)
+		}
+
+		return {}, false
+	}
+
+	if symbol.pkg == ast_context.document_package {
+		if global, ok := ast_context.globals[symbol.name]; ok {
+			if resolved, ok := resolve_global_alias_expression_target(ast_context, global); ok {
+				return resolved, true
+			}
+		}
+	}
+
 	candidate, ok := lookup(symbol.name, symbol.pkg, file)
 	if !ok {
+		if symbol.pkg == ast_context.document_package {
+			if global, ok := ast_context.globals[symbol.name]; ok {
+				if resolved, ok := resolve_global_alias_expression_target(ast_context, global); ok {
+					return resolved, true
+				}
+			}
+		}
 		return symbol, false
 	}
 
@@ -3599,6 +3693,9 @@ resolve_location_symbol_selector :: proc(
 		for name, i in v.names {
 			if strings.compare(name, field) == 0 {
 				symbol.range = v.ranges[i]
+				if i < len(v.types) && v.types[i] != nil && v.types[i].pos.file != "" {
+					symbol.uri = common.create_uri(v.types[i].pos.file, ast_context.allocator).uri
+				}
 				symbol.type = .Field
 				return symbol, true
 			}
@@ -3608,6 +3705,9 @@ resolve_location_symbol_selector :: proc(
 		for name, i in v.names {
 			if strings.compare(name, field) == 0 {
 				symbol.range = v.ranges[i]
+				if i < len(v.types) && v.types[i] != nil && v.types[i].pos.file != "" {
+					symbol.uri = common.create_uri(v.types[i].pos.file, ast_context.allocator).uri
+				}
 				symbol.type = .Field
 				return symbol, true
 			}
@@ -3615,6 +3715,18 @@ resolve_location_symbol_selector :: proc(
 		return {}, false
 	case SymbolPackageValue:
 		if pkg, ok := lookup_package_field_symbol(ast_context, field, symbol.pkg, selector.pos.file); ok {
+			pkg := pkg
+			if is_generated_uri(pkg.uri) {
+				if import_field, ok := lookup_package_import_field_symbol(field, symbol.pkg, selector.pos.file); ok {
+					pkg = import_field
+				}
+			}
+			if resolved_alias, ok := resolve_alias_symbol_target(ast_context, pkg, selector.pos.file); ok {
+				pkg = resolved_alias
+			}
+			if resolved_basic, ok := resolve_basic_symbol_target(ast_context, pkg, selector.pos.file); ok {
+				pkg = resolved_basic
+			}
 			symbol.range = pkg.range
 			symbol.uri = pkg.uri
 			return symbol, true
@@ -3931,6 +4043,11 @@ get_call_argument_type :: proc(
 	ok: bool,
 ) {
 	index := find_position_in_call_param(position_context, call^) or_return
+	old_resolve_specific_overload := ast_context.resolve_specific_overload
+	ast_context.resolve_specific_overload = true
+	defer {
+		ast_context.resolve_specific_overload = old_resolve_specific_overload
+	}
 	symbol := resolve_type_expression(ast_context, call) or_return
 	value := symbol.value.(SymbolProcedureValue) or_return
 

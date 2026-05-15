@@ -417,7 +417,11 @@ expect_definition_locations :: proc(t: ^testing.T, src: ^Source, expect_location
 
 	for expect_location, i in expect_locations {
 		for location, j in locations {
-			if location.range == expect_location.range {
+			if expect_location.uri != "" {
+				if location.range == expect_location.range && location.uri == expect_location.uri {
+					flags[i] += 1
+				}
+			} else if location.range == expect_location.range {
 				flags[i] += 1
 			}
 		}
@@ -425,7 +429,11 @@ expect_definition_locations :: proc(t: ^testing.T, src: ^Source, expect_location
 
 	for flag, i in flags {
 		if flag != 1 {
-			log.errorf("Expected location %v, but received %v", expect_locations[i].range, locations)
+			if expect_locations[i].uri == "" {
+				log.errorf("Expected location %v, but received %v", expect_locations[i].range, locations)
+			} else {
+				log.errorf("Expected location %v, but received %v", expect_locations[i], locations)
+			}
 		}
 	}
 }
