@@ -42,6 +42,11 @@ SymbolPackage :: struct {
 	comment:            map[string]string, // Tracks package comments in the file, indexed by file uri
 }
 
+@(private = "file")
+is_generated_symbol_uri :: proc(uri: string) -> bool {
+	return strings.contains(uri, ".generated.odin")
+}
+
 get_index_unique_string :: proc {
 	get_index_unique_string_collection,
 	get_index_unique_string_collection_raw,
@@ -1027,6 +1032,9 @@ collect_symbols :: proc(collection: ^SymbolCollection, file: ast.File, uri: stri
 		}
 
 		if v, ok := pkg.symbols[symbol.name]; !ok || v.name == "" {
+			pkg.symbols[symbol.name] = symbol
+		} else if is_generated_symbol_uri(v.uri) && !is_generated_symbol_uri(symbol.uri) {
+			free_symbol(v, collection.allocator)
 			pkg.symbols[symbol.name] = symbol
 		} else {
 			free_symbol(symbol, collection.allocator)

@@ -156,6 +156,176 @@ find_enum_member_definition_fallback :: proc(
 	return results[0], true
 }
 
+count_lines :: proc(text: []u8) -> int {
+	if len(text) == 0 {
+		return 1
+	}
+
+	lines := 0
+	for c in text {
+		if c == '\n' {
+			lines += 1
+		}
+	}
+
+	last := text[len(text) - 1]
+	if last != '\n' && last != '\r' {
+		lines += 1
+	}
+
+	if lines <= 0 {
+		lines = 1
+	}
+
+	return lines
+}
+
+sanitize_location_ranges :: proc(document: ^Document, locations: ^[dynamic]common.Location) {
+	for i in 0 ..< len(locations^) {
+		loc := &locations[i]
+
+		fullpath := document.fullpath
+		if loc.uri != "" {
+			fullpath = common.uri_to_path(loc.uri, context.temp_allocator)
+		}
+
+		lines := 1
+		has_line_info := false
+		if fullpath == document.fullpath {
+			lines = count_lines(document.text[:document.used_text])
+			has_line_info = true
+		} else if fullpath != "" {
+			if data, err := os.read_entire_file(fullpath, context.temp_allocator); err == nil {
+				lines = count_lines(data)
+				has_line_info = true
+			}
+		}
+
+		max_line := 0
+		if has_line_info {
+			max_line = max(lines - 1, 0)
+		} else if strings.starts_with(loc.uri, "file://test/") {
+			continue
+		}
+
+		if loc.range.start.line < 0 {
+			loc.range.start.line = 0
+		} else if loc.range.start.line > max_line {
+			loc.range.start.line = max_line
+		}
+
+		if loc.range.end.line < 0 {
+			loc.range.end.line = 0
+		} else if loc.range.end.line > max_line {
+			loc.range.end.line = max_line
+		}
+
+		if loc.range.end.line < loc.range.start.line {
+			loc.range.end.line = loc.range.start.line
+		}
+		if loc.range.start.character < 0 {
+			loc.range.start.character = 0
+		}
+		if loc.range.end.character < 0 {
+			loc.range.end.character = 0
+		}
+	}
+}
+
+is_skip_alias_candidate :: proc(ast_context: ^AstContext, symbol: Symbol) -> bool {
+	if symbol.name == "" || symbol.pkg == "" {
+		return false
+	}
+	if symbol.pkg != ast_context.document_package {
+		return false
+	}
+	global, ok := ast_context.globals[symbol.name]
+	if !ok || global.expr == nil {
+		return false
+	}
+	#partial switch v in global.expr.derived {
+	case ^ast.Ident, ^ast.Selector_Expr:
+		return true
+	}
+	return false
+}
+
+symbol_has_useful_location :: proc(symbol: Symbol) -> bool {
+	if symbol.uri != "" {
+		return true
+	}
+
+	return symbol.range.start.line > 0 ||
+		symbol.range.start.character > 0 ||
+		symbol.range.end.line > 0 ||
+		symbol.range.end.character > 0
+}
+
+resolve_definition_skip_alias_target :: proc(
+	ast_context: ^AstContext,
+	symbol: Symbol,
+	file: string,
+) -> (
+	Symbol,
+	bool,
+) {
+	result := symbol
+	pending_alias := is_skip_alias_candidate(ast_context, result)
+
+	for _ in 0 ..< 8 {
+		changed := false
+
+		if generic, ok := result.value.(SymbolGenericValue); ok && generic.expr != nil {
+			if resolved_location, ok := resolve_location_type_expression(ast_context, generic.expr); ok {
+				if symbol_has_useful_location(resolved_location) {
+					if resolved_location.range != result.range ||
+					   resolved_location.uri != result.uri ||
+					   resolved_location.pkg != result.pkg ||
+					   resolved_location.type != result.type {
+						result = resolved_location
+						changed = true
+						pending_alias = is_skip_alias_candidate(ast_context, result)
+					}
+				}
+			}
+		}
+
+		if resolved_alias, ok := resolve_alias_symbol_target(ast_context, result, file); ok {
+			if symbol_has_useful_location(result) && !symbol_has_useful_location(resolved_alias) {
+				// Keep existing target when alias resolution degrades into a keyword-like symbol with no location.
+				pending_alias = false
+			} else {
+			result = resolved_alias
+			changed = true
+			pending_alias = is_skip_alias_candidate(ast_context, result)
+			}
+		} else if pending_alias {
+			return {}, false
+		}
+
+		if resolved_basic, ok := resolve_basic_symbol_target(ast_context, result, file); ok {
+			if symbol_has_useful_location(result) && !symbol_has_useful_location(resolved_basic) {
+				// Keep existing target when basic resolution drops location information.
+				pending_alias = false
+			} else {
+				result = resolved_basic
+				changed = true
+				pending_alias = is_skip_alias_candidate(ast_context, result)
+			}
+		}
+
+		if !changed {
+			break
+		}
+	}
+
+	if pending_alias {
+		return {}, false
+	}
+
+	return result, true
+}
+
 get_definition_location :: proc(document: ^Document, position: common.Position, config: ^common.Config) -> ([]common.Location, bool) {
 	locations := make([dynamic]common.Location, context.temp_allocator)
 
@@ -189,6 +359,7 @@ get_definition_location :: proc(document: ^Document, position: common.Position, 
 
 	if position_context.import_stmt != nil {
 		if get_all_package_file_locations(document, position_context.import_stmt, &locations) {
+			sanitize_location_ranges(document, &locations)
 			return locations[:], true
 		}
 	} else if position_context.implicit_selector_expr != nil {
@@ -197,6 +368,13 @@ get_definition_location :: proc(document: ^Document, position: common.Position, 
 			&position_context,
 			position_context.implicit_selector_expr,
 		); ok {
+			if config.enable_definition_skip_alias {
+				if skip_resolved, ok := resolve_definition_skip_alias_target(&ast_context, resolved, document.fullpath); ok {
+					resolved = skip_resolved
+				} else {
+					return {}, false
+				}
+			}
 			location.range = resolved.range
 			uri = resolved.uri
 		} else {
@@ -205,6 +383,7 @@ get_definition_location :: proc(document: ^Document, position: common.Position, 
 				position_context.implicit_selector_expr.field.name,
 			); ok {
 				append(&locations, fallback_location)
+				sanitize_location_ranges(document, &locations)
 				return locations[:], true
 			}
 			return {}, false
@@ -216,8 +395,10 @@ get_definition_location :: proc(document: ^Document, position: common.Position, 
 			ident := position_context.identifier.derived.(^ast.Ident)
 			if resolved, ok := resolve_location_identifier(&ast_context, ident^); ok {
 				if config.enable_definition_skip_alias {
-					if resolved_alias, ok := resolve_alias_symbol_target(&ast_context, resolved, document.fullpath); ok {
-						resolved = resolved_alias
+					if skip_resolved, ok := resolve_definition_skip_alias_target(&ast_context, resolved, document.fullpath); ok {
+						resolved = skip_resolved
+					} else {
+						return {}, false
 					}
 				}
 				location.range = resolved.range
@@ -229,6 +410,7 @@ get_definition_location :: proc(document: ^Document, position: common.Position, 
 				}
 
 				append(&locations, location)
+				sanitize_location_ranges(document, &locations)
 
 				return locations[:], true
 			} else {
@@ -237,6 +419,13 @@ get_definition_location :: proc(document: ^Document, position: common.Position, 
 		}
 
 		if resolved, ok := resolve_location_selector(&ast_context, position_context.selector_expr); ok {
+			if config.enable_definition_skip_alias {
+				if skip_resolved, ok := resolve_definition_skip_alias_target(&ast_context, resolved, document.fullpath); ok {
+					resolved = skip_resolved
+				} else {
+					return {}, false
+				}
+			}
 			if config.enable_overload_resolution {
 				resolved = try_resolve_proc_group_overload(
 					&ast_context,
@@ -253,8 +442,15 @@ get_definition_location :: proc(document: ^Document, position: common.Position, 
 	} else if position_context.field_value != nil &&
 	   !is_expr_basic_lit(position_context.field_value.field) &&
 	   position_in_node(position_context.field_value.field, position_context.position) {
-		if position_context.comp_lit != nil {
+	if position_context.comp_lit != nil {
 			if resolved, ok := resolve_location_comp_lit_field(&ast_context, &position_context); ok {
+				if config.enable_definition_skip_alias {
+					if skip_resolved, ok := resolve_definition_skip_alias_target(&ast_context, resolved, document.fullpath); ok {
+						resolved = skip_resolved
+					} else {
+						return {}, false
+					}
+				}
 				location.range = resolved.range
 				uri = resolved.uri
 			} else {
@@ -262,6 +458,13 @@ get_definition_location :: proc(document: ^Document, position: common.Position, 
 			}
 		} else if position_context.call != nil {
 			if resolved, ok := resolve_location_proc_param_name(&ast_context, &position_context); ok {
+				if config.enable_definition_skip_alias {
+					if skip_resolved, ok := resolve_definition_skip_alias_target(&ast_context, resolved, document.fullpath); ok {
+						resolved = skip_resolved
+					} else {
+						return {}, false
+					}
+				}
 				location.range = resolved.range
 				uri = resolved.uri
 			} else {
@@ -274,8 +477,10 @@ get_definition_location :: proc(document: ^Document, position: common.Position, 
 			position_context.identifier.derived.(^ast.Ident)^,
 		); ok {
 			if config.enable_definition_skip_alias {
-				if resolved_alias, ok := resolve_alias_symbol_target(&ast_context, resolved, document.fullpath); ok {
-					resolved = resolved_alias
+				if skip_resolved, ok := resolve_definition_skip_alias_target(&ast_context, resolved, document.fullpath); ok {
+					resolved = skip_resolved
+				} else {
+					return {}, false
 				}
 			}
 			if config.enable_overload_resolution {
@@ -303,6 +508,7 @@ get_definition_location :: proc(document: ^Document, position: common.Position, 
 	}
 
 	append(&locations, location)
+	sanitize_location_ranges(document, &locations)
 
 	return locations[:], true
 }
