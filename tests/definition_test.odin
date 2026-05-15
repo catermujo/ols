@@ -698,6 +698,79 @@ ast_goto_nested_field_definition_cross_file_global_no_using :: proc(t: ^testing.
 }
 
 @(test)
+ast_goto_field_definition_with_selector_expr_using_cross_file_global_uri :: proc(t: ^testing.T) {
+	source := test.Source {
+		main     = `package test
+
+		use :: proc() {
+			g.pip{*}e
+		}
+		`,
+		packages = {
+			{
+				pkg = "",
+				source = `package test
+
+				GFX :: struct {
+					pipe: int,
+				}
+
+				State :: struct {
+					using _: GFX,
+				}
+
+				g: ^State
+				`,
+			},
+		},
+	}
+
+	location := common.Location {
+		uri = "file://test//package.odin",
+		range = {start = {line = 3, character = 5}, end = {line = 3, character = 9}},
+	}
+
+	test.expect_definition_locations(t, &source, {location})
+}
+
+@(test)
+ast_goto_field_definition_with_selector_expr_using_imported_package_uri :: proc(t: ^testing.T) {
+	source := test.Source {
+		main     = `package test
+		import gp "gfxpkg"
+
+		State :: struct {
+			using _: gp.GFX,
+		}
+
+		g: ^State
+
+		use :: proc() {
+			g.pip{*}e
+		}
+		`,
+		packages = {
+			{
+				pkg = "gfxpkg",
+				source = `package gfxpkg
+
+				GFX :: struct {
+					pipe: int,
+				}
+				`,
+			},
+		},
+	}
+
+	location := common.Location {
+		uri = "file://test/gfxpkg/package.odin",
+		range = {start = {line = 3, character = 5}, end = {line = 3, character = 9}},
+	}
+
+	test.expect_definition_locations(t, &source, {location})
+}
+
+@(test)
 ast_goto_struct_field_from_proc :: proc (t: ^testing.T) {
 	source := test.Source {
 		main     = `package test
@@ -1021,6 +1094,119 @@ ast_goto_proc_group_overload_identifier :: proc(t: ^testing.T) {
 	// because push_back is the overload being used with a single value argument
 	locations := []common.Location {
 		{range = {start = {line = 1, character = 2}, end = {line = 1, character = 11}}},
+	}
+
+	test.expect_definition_locations(t, &source, locations[:])
+}
+
+@(test)
+ast_goto_selector_package_alias_chain_prefers_resolved_target :: proc(t: ^testing.T) {
+	packages := make([dynamic]test.Package, context.temp_allocator)
+
+	append(&packages, test.Package {
+		pkg = "backend_sokol",
+		source = `package backend_sokol
+			make_buffer :: proc(desc: int) -> int {
+				return desc
+			}
+		`,
+	})
+
+	append(&packages, test.Package {
+		pkg = "backend",
+		source = `package backend
+			import vsg "backend_sokol"
+			make_buffer :: vsg.make_buffer
+		`,
+	})
+
+	source := test.Source {
+		main = `package test
+		import sg "backend"
+
+		main :: proc() {
+			sg.make_buf{*}fer(1)
+		}
+	`,
+		packages = packages[:],
+	}
+
+	locations := []common.Location {
+		{
+			uri = "file://test/backend_sokol/package.odin",
+			range = {start = {line = 1, character = 3}, end = {line = 1, character = 14}},
+		},
+	}
+
+	test.expect_definition_locations(t, &source, locations[:])
+}
+
+@(test)
+ast_goto_identifier_definition_skip_alias_global :: proc(t: ^testing.T) {
+	packages := make([dynamic]test.Package, context.temp_allocator)
+
+	append(&packages, test.Package {
+		pkg = "co_pkg",
+		source = `package co_pkg
+vpos2 :: proc(x: int) -> int {
+	return x
+}
+`,
+	})
+
+	source := test.Source {
+		main = `package test
+import co "co_pkg"
+
+vpos :: co.vpos2
+
+main :: proc() {
+	vpo{*}s(1)
+}
+`,
+		packages = packages[:],
+		config = {enable_definition_skip_alias = true},
+	}
+
+	locations := []common.Location {
+		{
+			uri = "file://test/co_pkg/package.odin",
+			range = {start = {line = 1, character = 0}, end = {line = 1, character = 5}},
+		},
+	}
+
+	test.expect_definition_locations(t, &source, locations[:])
+}
+
+@(test)
+ast_goto_identifier_definition_skip_alias_when_config_alias_preserves_location :: proc(t: ^testing.T) {
+	packages := make([dynamic]test.Package, context.temp_allocator)
+
+	append(&packages, test.Package{
+		pkg = "toxpkg",
+		source = `package toxpkg
+EDITOR :: #config(EDITOR, false)
+`,
+	})
+
+	source := test.Source{
+		main = `package test
+import tox "toxpkg"
+
+EDITOR :: tox.EDITOR
+
+when EDI{*}TOR {
+}
+`,
+		packages = packages[:],
+		config = {enable_definition_skip_alias = true},
+	}
+
+	locations := []common.Location{
+		{
+			uri = "file://test/test.odin",
+			range = {start = {line = 3, character = 0}, end = {line = 3, character = 6}},
+		},
 	}
 
 	test.expect_definition_locations(t, &source, locations[:])
