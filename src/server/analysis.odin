@@ -1845,6 +1845,7 @@ resolve_selector_expression :: proc(ast_context: ^AstContext, node: ^ast.Selecto
 
 	selector := Symbol{}
 	if ok := internal_resolve_type_expression(ast_context, node.expr, &selector); ok {
+		selector = resolve_base_symbol(ast_context, selector)
 		if resolved_alias, ok := resolve_alias_symbol_target(ast_context, selector, node.pos.file); ok {
 			selector = resolved_alias
 		}
