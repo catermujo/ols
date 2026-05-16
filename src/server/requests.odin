@@ -466,27 +466,58 @@ read_ols_initialize_options :: proc(config: ^common.Config, ols_config: OlsConfi
 		config.struct_fields_underscore_visibility = .Private_Package
 	}
 
+	selected_profile := false
+	config.checker_profiles = make([dynamic]common.ConfigProfile, 0, len(ols_config.profiles), context.allocator)
 	for profile in ols_config.profiles {
-		if ols_config.profile == profile.name {
-			config.profile.checker_path = make([dynamic]string, len(profile.checker_path))
-			config.profile.exclude_path = make([dynamic]string, len(profile.exclude_path))
+		resolved_profile: common.ConfigProfile
+		resolved_profile.name = strings.clone(profile.name, context.allocator)
+		resolved_profile.os = strings.clone(profile.os, context.allocator)
+		resolved_profile.arch = strings.clone(profile.arch, context.allocator)
 
-			for checker_path, i in profile.checker_path {
-				config.profile.checker_path[i] = path.join(elems = {uri.path, checker_path})
+		resolved_profile.checker_path = make([dynamic]string, len(profile.checker_path), context.allocator)
+		resolved_profile.checker_match_paths =
+			make([dynamic]string, len(profile.checker_match_paths), context.allocator)
+		resolved_profile.exclude_path = make([dynamic]string, len(profile.exclude_path), context.allocator)
+		resolved_profile.defines = make(map[string]string, context.allocator)
+
+		for checker_path, i in profile.checker_path {
+			if filepath.is_abs(checker_path) {
+				resolved_profile.checker_path[i] = strings.clone(checker_path, context.allocator)
+			} else {
+				resolved_profile.checker_path[i] = path.join(elems = {uri.path, checker_path}, allocator = context.allocator)
 			}
-			for exclude_path, i in profile.exclude_path {
-				config.profile.exclude_path[i] = path.join(elems = {uri.path, exclude_path})
-			}
-
-			config.profile.os = strings.clone(profile.os)
-			config.profile.arch = strings.clone(profile.arch)
-
-			for key, value in profile.defines {
-				config.profile.defines[strings.clone(key)] = strings.clone(value)
-			}
-
-			break
 		}
+		for checker_match_path, i in profile.checker_match_paths {
+			if filepath.is_abs(checker_match_path) {
+				resolved_profile.checker_match_paths[i] = strings.clone(checker_match_path, context.allocator)
+			} else {
+				resolved_profile.checker_match_paths[i] = path.join(
+					elems = {uri.path, checker_match_path},
+					allocator = context.allocator,
+				)
+			}
+		}
+		for exclude_path, i in profile.exclude_path {
+			if filepath.is_abs(exclude_path) {
+				resolved_profile.exclude_path[i] = strings.clone(exclude_path, context.allocator)
+			} else {
+				resolved_profile.exclude_path[i] = path.join(elems = {uri.path, exclude_path}, allocator = context.allocator)
+			}
+		}
+
+		for key, value in profile.defines {
+			resolved_profile.defines[strings.clone(key, context.allocator)] = strings.clone(value, context.allocator)
+		}
+
+		append(&config.checker_profiles, resolved_profile)
+		if ols_config.profile == profile.name {
+			config.profile = resolved_profile
+			selected_profile = true
+		}
+	}
+
+	if !selected_profile && len(config.checker_profiles) > 0 {
+		config.profile = config.checker_profiles[0]
 	}
 
 	if config.profile.os == "" {

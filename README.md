@@ -136,6 +136,8 @@ Options:
 
 - `profiles`: List of different profiles that describe the environment ols is running under. This allows you to define different operating systems, architectures and defines for `ols` to use during development, easily switching between them using the `profile` configuration.
 
+- `profiles[].checker_match_paths`: Optional path prefixes that auto-select a profile for checker diagnostics based on the saved file path. Longest prefix match wins.
+
 ### Odinfmt configurations
 
 Odinfmt reads configuration through `odinfmt.json`.

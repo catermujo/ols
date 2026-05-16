@@ -174,16 +174,23 @@
 						"type": "string",
 						"description": "The architecture for the profile."
 					},
-					"checker_path": {
-						"type": "array",
-						"description": "List of paths where to run the checker.",
-						"items": {
-							"type": "string"
-						}
-					},
-					"exclude_path": {
-						"type": "array",
-						"description": "List of paths that will be excluded from workspace symbol searches.",
+						"checker_path": {
+							"type": "array",
+							"description": "List of paths where to run the checker.",
+							"items": {
+								"type": "string"
+							}
+						},
+						"checker_match_paths": {
+							"type": "array",
+							"description": "List of file/directory path prefixes that should use this profile when running checker diagnostics for a saved file. Longest prefix match wins.",
+							"items": {
+								"type": "string"
+							}
+						},
+						"exclude_path": {
+							"type": "array",
+							"description": "List of paths that will be excluded from workspace symbol searches.",
 						"items": {
 							"type": "string"
 						}

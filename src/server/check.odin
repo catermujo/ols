@@ -383,33 +383,143 @@ check_unused_imports :: proc(document: ^Document, config: ^common.Config) {
 	}
 }
 
-resolve_check_paths :: proc(mode: Check_Mode, paths: []string, config: ^common.Config) -> []string {
-	if len(config.profile.checker_path) > 0 {
-		return config.profile.checker_path[:]
+Check_Target :: struct {
+	path:          string,
+	profile_index: int,
+}
+
+@(private = "file")
+normalize_checker_match_path :: proc(raw: string) -> string {
+	path := raw
+	when ODIN_OS == .Windows {
+		path = common.get_case_sensitive_path(path, context.temp_allocator)
+	}
+	path, _ = filepath.replace_separators(path, '/', context.temp_allocator)
+	return path
+}
+
+@(private = "file")
+checker_match_prefix :: proc(path: string, raw_prefix: string) -> bool {
+	prefix := normalize_checker_match_path(raw_prefix)
+	if prefix == "" {
+		return false
 	}
 
+	if strings.has_suffix(prefix, "/**") {
+		prefix = prefix[:len(prefix) - 3]
+	}
+
+	if !strings.has_prefix(path, prefix) {
+		return false
+	}
+
+	if len(path) == len(prefix) {
+		return true
+	}
+
+	if strings.has_suffix(prefix, "/") {
+		return true
+	}
+
+	return path[len(prefix)] == '/'
+}
+
+@(private = "file")
+select_checker_profile_index :: proc(config: ^common.Config, file_path: string) -> int {
+	best_index := -1
+	best_match_length := -1
+	normalized_path := normalize_checker_match_path(file_path)
+
+	for profile, i in config.checker_profiles {
+		for prefix in profile.checker_match_paths {
+			if !checker_match_prefix(normalized_path, prefix) {
+				continue
+			}
+			prefix_len := len(prefix)
+			if prefix_len > best_match_length {
+				best_match_length = prefix_len
+				best_index = i
+			}
+		}
+	}
+
+	return best_index
+}
+
+@(private = "file")
+select_checker_profile :: proc(config: ^common.Config, profile_index: int) -> ^common.ConfigProfile {
+	if profile_index >= 0 && profile_index < len(config.checker_profiles) {
+		return &config.checker_profiles[profile_index]
+	}
+	return &config.profile
+}
+
+@(private = "file")
+append_check_target :: proc(
+	results: ^[dynamic]Check_Target,
+	seen: ^map[string]struct{},
+	path: string,
+	profile_index: int,
+) {
+	key := fmt.tprintf("%d|%s", profile_index, path)
+	if key in seen {
+		return
+	}
+	seen[key] = {}
+	append(results, Check_Target{path = path, profile_index = profile_index})
+}
+
+resolve_check_targets :: proc(mode: Check_Mode, paths: []string, config: ^common.Config) -> []Check_Target {
+	results := make([dynamic]Check_Target, context.temp_allocator)
+	seen := make(map[string]struct{}, context.temp_allocator)
+
 	if mode == .Saved || config.enable_checker_only_saved {
-		results := make([dynamic]string, context.temp_allocator)
-		seen := make(map[string]struct{}, context.temp_allocator)
 		for p in paths {
 			if p == "" {
 				continue
 			}
+
+			profile_index := select_checker_profile_index(config, p)
+			profile := select_checker_profile(config, profile_index)
+
+			if len(profile.checker_path) > 0 {
+				for checker_path in profile.checker_path {
+					if checker_path in config.checker_skip_packages {
+						continue
+					}
+					append_check_target(&results, &seen, checker_path, profile_index)
+				}
+				continue
+			}
+
 			dir := path.dir(p, context.temp_allocator)
 			if dir in config.checker_skip_packages {
 				continue
 			}
-			if dir in seen {
+			append_check_target(&results, &seen, dir, profile_index)
+		}
+
+		return results[:]
+	}
+
+	if len(config.profile.checker_path) > 0 {
+		for checker_path in config.profile.checker_path {
+			if checker_path in config.checker_skip_packages {
 				continue
 			}
-			seen[dir] = {}
-			append(&results, dir)
+			append_check_target(&results, &seen, checker_path, -1)
 		}
 		return results[:]
 	}
 
 	if mode == .Workspace && config.enable_checker_workspace_diagnostics {
-		return fallback_find_odin_directories(config)
+		for p in fallback_find_odin_directories(config) {
+			if p in config.checker_skip_packages {
+				continue
+			}
+			append_check_target(&results, &seen, p, -1)
+		}
+		return results[:]
 	}
 
 	return {}
@@ -425,9 +535,9 @@ CheckProcess :: struct {
 
 check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config, progress_tokens: []string = {}) {
 	check_start := time.now()
-	paths := resolve_check_paths(mode, check_paths, config)
+	targets := resolve_check_targets(mode, check_paths, config)
 
-	if len(paths) == 0 {
+	if len(targets) == 0 {
 		if len(progress_tokens) > 0 {
 			for token in progress_tokens {
 				if token == "" {
@@ -438,7 +548,7 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config, p
 		}
 		if common.config.verbose {
 			log.infof(
-				"check skipped: mode=%s input_paths=%v resolved_paths=0",
+				"check skipped: mode=%s input_paths=%v resolved_targets=0",
 				check_mode_to_string(mode),
 				len(check_paths),
 			)
@@ -457,11 +567,11 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config, p
 	if mode == .Saved {
 		if check_progress_token == "" {
 			progress_title := "Rechecking package"
-			progress_message := fmt.tprintf("Checking %s", filepath.base(paths[0]))
+			progress_message := fmt.tprintf("Checking %s", filepath.base(targets[0].path))
 
-			if len(paths) > 1 {
-				progress_title = fmt.tprintf("Rechecking %d packages", len(paths))
-				progress_message = fmt.tprintf("Checking 1 of %d packages", len(paths))
+			if len(targets) > 1 {
+				progress_title = fmt.tprintf("Rechecking %d packages", len(targets))
+				progress_message = fmt.tprintf("Checking 1 of %d packages", len(targets))
 			}
 
 			check_progress_token = progress_task_begin(
@@ -473,7 +583,7 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config, p
 		} else {
 			progress_report(
 				check_progress_token,
-				fmt.tprintf("Checking 1 of %d packages", len(paths)),
+				fmt.tprintf("Checking 1 of %d packages", len(targets)),
 				0,
 			)
 		}
@@ -481,10 +591,10 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config, p
 
 	if common.config.verbose {
 		log.infof(
-			"check start: mode=%s input_paths=%v resolved_paths=%v",
+			"check start: mode=%s input_paths=%v resolved_targets=%v",
 			check_mode_to_string(mode),
 			len(check_paths),
-			len(paths),
+			len(targets),
 		)
 	}
 
@@ -500,18 +610,19 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config, p
 	}
 
 	max_concurrent_checks := max(1, os.get_processor_core_count())
-	processes := make([dynamic]CheckProcess, 0, len(paths))
+	processes := make([dynamic]CheckProcess, 0, len(targets))
 
-	errors := make([dynamic]Json_Errors, 0, len(paths), context.temp_allocator)
+	errors := make([dynamic]Json_Errors, 0, len(targets), context.temp_allocator)
 
 	next_index := 0
 	running_count := 0
 	start := time.now()
 
-	for running_count > 0 || next_index < len(paths) {
-		for running_count < max_concurrent_checks && next_index < len(paths) {
-			check_path := paths[next_index]
-			p, ok := start_check_process(check_path, collections[:], config)
+	for running_count > 0 || next_index < len(targets) {
+		for running_count < max_concurrent_checks && next_index < len(targets) {
+			target := targets[next_index]
+			profile := select_checker_profile(config, target.profile_index)
+			p, ok := start_check_process(target.path, collections[:], config, profile)
 			next_index += 1
 			if !ok {
 				continue
@@ -519,13 +630,13 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config, p
 			append(&processes, p)
 			running_count += 1
 			if check_progress_token != "" {
-				progress_report(check_progress_token, fmt.tprintf("Checking %s", filepath.base(check_path)))
+				progress_report(check_progress_token, fmt.tprintf("Checking %s", filepath.base(target.path)))
 			}
 			if common.config.verbose {
 				log.infof(
 					"check process started: mode=%s path=%q running=%v max=%v",
 					check_mode_to_string(mode),
-					check_path,
+					target.path,
 					running_count,
 					max_concurrent_checks,
 				)
@@ -583,10 +694,10 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config, p
 
 			completed_checks += 1
 			if check_progress_token != "" {
-				percentage := (completed_checks * 100) / len(paths)
+				percentage := (completed_checks * 100) / len(targets)
 				progress_report(
 					check_progress_token,
-					fmt.tprintf("Checked %s (%d/%d)", filepath.base(p.path), completed_checks, len(paths)),
+					fmt.tprintf("Checked %s (%d/%d)", filepath.base(p.path), completed_checks, len(targets)),
 					percentage,
 				)
 			}
@@ -598,7 +709,7 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config, p
 			}
 		}
 
-		if running_count > 0 || next_index < len(paths) {
+		if running_count > 0 || next_index < len(targets) {
 			time.sleep(1 * time.Millisecond)
 		}
 	}
@@ -632,6 +743,13 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config, p
 			when ODIN_OS == .Windows {
 				path = common.get_case_sensitive_path(path, context.temp_allocator)
 				path, _ = filepath.replace_separators(path, '/', context.temp_allocator)
+			}
+
+			// Some checker warnings (for example unused -define values) are emitted
+			// without a concrete source file. Skip those here so we do not publish
+			// invalid "file://" diagnostics.
+			if path == "" {
+				continue
 			}
 
 			key := DiagnosticKey {
@@ -675,13 +793,13 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config, p
 		}
 	}
 
-	if check_progress_token != "" {
-		end_message := ""
-		if timed_out {
-			end_message = fmt.tprintf("Recheck timed out (%d/%d)", completed_checks, len(paths))
-		} else {
-			end_message = fmt.tprintf("Recheck done (%d/%d)", completed_checks, len(paths))
-		}
+		if check_progress_token != "" {
+			end_message := ""
+			if timed_out {
+				end_message = fmt.tprintf("Recheck timed out (%d/%d)", completed_checks, len(targets))
+			} else {
+				end_message = fmt.tprintf("Recheck done (%d/%d)", completed_checks, len(targets))
+			}
 		progress_end(check_progress_token, end_message)
 
 		if len(progress_tokens) > 1 {
@@ -696,9 +814,9 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config, p
 
 	if common.config.verbose {
 		log.infof(
-			"check done: mode=%s resolved_paths=%v diagnostics=%v timed_out=%v elapsed_ms=%v",
+			"check done: mode=%s resolved_targets=%v diagnostics=%v timed_out=%v elapsed_ms=%v",
 			check_mode_to_string(mode),
-			len(paths),
+			len(targets),
 			len(diagnostics),
 			timed_out,
 			time.duration_milliseconds(time.since(check_start)),
@@ -711,6 +829,7 @@ start_check_process :: proc(
 	check_path: string,
 	collections: []string,
 	config: ^common.Config,
+	profile: ^common.ConfigProfile,
 ) -> (
 	CheckProcess,
 	bool,
@@ -729,7 +848,7 @@ start_check_process :: proc(
 	for c in collections {
 		append(&cmd, c)
 	}
-	for k, v in config.profile.defines {
+	for k, v in profile.defines {
 		append(&cmd, fmt.tprintf("-define:%s=%s", k, v))
 	}
 	append(&cmd, entry_point_opt, "-json-errors")
