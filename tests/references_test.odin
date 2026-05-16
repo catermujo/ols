@@ -1727,6 +1727,60 @@ ast_references_should_include_declaration :: proc(t: ^testing.T) {
 }
 
 @(test)
+ast_references_in_when_block_with_config_default_true :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+		EDITOR :: #config(EDITOR, true)
+
+		when EDITOR {
+			Change_Me :: proc() {}
+		}
+
+		main :: proc() {
+			Chang{*}e_Me()
+		}
+		`,
+	}
+	locations := []common.Location{
+		{range = {start = {line = 4, character = 3}, end = {line = 4, character = 12}}},
+		{range = {start = {line = 8, character = 3}, end = {line = 8, character = 12}}},
+	}
+
+	test.expect_reference_locations(t, &source, locations[:], include_declaration = true)
+}
+
+@(test)
+ast_references_decl_in_when_block_with_config_default_true_from_package_file :: proc(t: ^testing.T) {
+	packages := make([dynamic]test.Package, context.temp_allocator)
+	append(&packages, test.Package{
+		pkg = "test",
+		source = `package test
+		EDITOR :: #config(EDITOR, true)
+		`,
+	})
+
+	source := test.Source{
+		main = `package test
+		when EDITOR {
+			procgen_noise_sync_overr{*}ide :: proc() {}
+		}
+
+		main :: proc() {
+			procgen_noise_sync_override()
+		}
+		`,
+		packages = packages[:],
+	}
+
+	locations := []common.Location{
+		{range = {start = {line = 2, character = 3}, end = {line = 2, character = 30}}},
+		{range = {start = {line = 6, character = 3}, end = {line = 6, character = 30}}},
+	}
+
+	test.expect_reference_locations(t, &source, locations[:], include_declaration = true)
+}
+
+@(test)
 ast_references_should_skip_declaration :: proc(t: ^testing.T) {
 	source := test.Source {
 		main = `package test

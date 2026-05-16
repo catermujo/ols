@@ -501,13 +501,13 @@ collect_when_stmt :: proc(
 	if when_decl.body == nil {
 		return
 	}
-	if stmt, ok := get_when_block_stmt(when_decl); ok {
+	if stmt, ok := get_when_block_stmt(file, when_decl); ok {
 		collect_when_body(exprs, file, file_tags, stmt)
 	}
 }
 
-get_when_block_stmt :: proc(when_decl: ^ast.When_Stmt) -> (^ast.Block_Stmt, bool) {
-	if resolve_when_condition(when_decl.cond) {
+get_when_block_stmt :: proc(file: ast.File, when_decl: ^ast.When_Stmt) -> (^ast.Block_Stmt, bool) {
+	if resolve_when_condition(file, when_decl.cond) {
 		if block, ok := when_decl.body.derived.(^ast.Block_Stmt); ok {
 			return block, true
 		}
@@ -516,7 +516,7 @@ get_when_block_stmt :: proc(when_decl: ^ast.When_Stmt) -> (^ast.Block_Stmt, bool
 
 		for else_stmt != nil {
 			if else_when, ok := else_stmt.derived.(^ast.When_Stmt); ok {
-				if resolve_when_condition(else_when.cond) {
+				if resolve_when_condition(file, else_when.cond) {
 					if block, ok := else_when.body.derived.(^ast.Block_Stmt); ok {
 						return block, true
 					}
