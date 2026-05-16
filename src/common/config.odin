@@ -45,6 +45,7 @@ Config :: struct {
 	enable_definition_skip_alias:            bool,
 	enable_procedure_snippet:                bool,
 	enable_checker_only_saved:               bool,
+	enable_checker_on_open:                  bool,
 	enable_checker_workspace_diagnostics:    bool,
 	enable_auto_import:                      bool,
 	enable_completion_matching:              bool,

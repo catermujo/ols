@@ -36,6 +36,7 @@ Json_Errors :: struct {
 
 Check_Mode :: enum {
 	Saved,
+	Opened,
 	Workspace,
 }
 
@@ -65,6 +66,8 @@ check_mode_to_string :: proc(mode: Check_Mode) -> string {
 	switch mode {
 	case .Saved:
 		return "saved"
+	case .Opened:
+		return "opened"
 	case .Workspace:
 		return "workspace"
 	}
@@ -149,11 +152,13 @@ run_check_consumer :: proc(c: Consumer) {
 		progress_setup_current_thread(c.w)
 
 		saved_paths := make([dynamic]string, allocator = context.temp_allocator)
+		opened_paths := make([dynamic]string, allocator = context.temp_allocator)
 		workspace_paths := make([dynamic]string, allocator = context.temp_allocator)
 		saved_progress_tokens := make([dynamic]string, allocator = context.temp_allocator)
 		workspace_progress_tokens := make([dynamic]string, allocator = context.temp_allocator)
 
 		saved_config := request.config
+		opened_config := request.config
 		workspace_config := request.config
 
 		switch request.check_mode {
@@ -163,6 +168,9 @@ run_check_consumer :: proc(c: Consumer) {
 			if request.progress_token != "" {
 				append(&saved_progress_tokens, request.progress_token)
 			}
+		case .Opened:
+			opened_config = request.config
+			append(&opened_paths, request.path)
 		case .Workspace:
 			workspace_config = request.config
 			append(&workspace_paths, request.path)
@@ -179,6 +187,9 @@ run_check_consumer :: proc(c: Consumer) {
 				if req.progress_token != "" {
 					append(&saved_progress_tokens, req.progress_token)
 				}
+			case .Opened:
+				opened_config = req.config
+				append(&opened_paths, req.path)
 			case .Workspace:
 				workspace_config = req.config
 				append(&workspace_paths, req.path)
@@ -190,8 +201,9 @@ run_check_consumer :: proc(c: Consumer) {
 
 		if common.config.verbose {
 			log.infof(
-				"check consumer batch: saved_requests=%v workspace_requests=%v",
+				"check consumer batch: saved_requests=%v opened_requests=%v workspace_requests=%v",
 				len(saved_paths),
+				len(opened_paths),
 				len(workspace_paths),
 			)
 		}
@@ -201,12 +213,20 @@ run_check_consumer :: proc(c: Consumer) {
 			push_diagnostics(c.w)
 		}
 
+		if len(opened_paths) > 0 {
+			check(.Opened, opened_paths[:], opened_config)
+			push_diagnostics(c.w)
+		}
+
 		if len(workspace_paths) > 0 {
 			check(.Workspace, workspace_paths[:], workspace_config, workspace_progress_tokens[:])
 			push_diagnostics(c.w)
 		}
 
 		for path in saved_paths {
+			delete(path, checker.allocator)
+		}
+		for path in opened_paths {
 			delete(path, checker.allocator)
 		}
 		for path in workspace_paths {
@@ -473,7 +493,7 @@ resolve_check_targets :: proc(mode: Check_Mode, paths: []string, config: ^common
 	results := make([dynamic]Check_Target, context.temp_allocator)
 	seen := make(map[string]struct{}, context.temp_allocator)
 
-	if mode == .Saved || config.enable_checker_only_saved {
+	if mode == .Saved || mode == .Opened || config.enable_checker_only_saved {
 		for p in paths {
 			if p == "" {
 				continue

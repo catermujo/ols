@@ -422,6 +422,9 @@ read_ols_initialize_options :: proc(config: ^common.Config, ols_config: OlsConfi
 	config.enable_checker_only_saved =
 		ols_config.enable_checker_only_saved.(bool) or_else config.enable_checker_only_saved
 
+	config.enable_checker_on_open =
+		ols_config.enable_checker_on_open.(bool) or_else config.enable_checker_on_open
+
 	config.enable_checker_workspace_diagnostics =
 		ols_config.enable_checker_workspace_diagnostics.(bool) or_else config.enable_checker_workspace_diagnostics
 
@@ -757,6 +760,7 @@ request_initialize :: proc(
 	config.enable_procedure_snippet = true
 	config.enable_definition_skip_alias = false
 	config.enable_checker_only_saved = true
+	config.enable_checker_on_open = false
 	config.enable_checker_workspace_diagnostics = false
 	config.enable_auto_import = true
 
@@ -1228,10 +1232,18 @@ notification_did_open :: proc(
 	}
 
 	document := document_get(open_params.textDocument.uri)
+	uri, parsed_ok := common.parse_uri(open_params.textDocument.uri, context.temp_allocator)
+	if !parsed_ok {
+		return .ParseError
+	}
 
 	check_unused_imports(document, config)
 
 	push_diagnostics(writer)
+
+	if config.enable_checker_on_open {
+		queue_check_request(.Opened, uri.path, config)
+	}
 
 	return .None
 }
