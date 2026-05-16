@@ -503,19 +503,20 @@ collect_when_stmt :: proc(
 	if when_decl.body == nil {
 		return
 	}
-	if stmt, ok := get_when_block_stmt(when_decl, when_expr_map^); ok {
+	if stmt, ok := get_when_block_stmt(file, when_decl, when_expr_map^); ok {
 		collect_when_body(exprs, file, file_tags, stmt, when_expr_map)
 	}
 }
 
 get_when_block_stmt :: proc(
+	file: ast.File,
 	when_decl: ^ast.When_Stmt,
 	when_expr_map: map[string]When_Expr,
 ) -> (
 	^ast.Block_Stmt,
 	bool,
 ) {
-	if resolve_when_condition(when_decl.cond, when_expr_map) {
+	if resolve_when_condition(file, when_decl.cond, when_expr_map) {
 		if block, ok := when_decl.body.derived.(^ast.Block_Stmt); ok {
 			return block, true
 		}
@@ -524,7 +525,7 @@ get_when_block_stmt :: proc(
 
 		for else_stmt != nil {
 			if else_when, ok := else_stmt.derived.(^ast.When_Stmt); ok {
-				if resolve_when_condition(else_when.cond, when_expr_map) {
+				if resolve_when_condition(file, else_when.cond, when_expr_map) {
 					if block, ok := else_when.body.derived.(^ast.Block_Stmt); ok {
 						return block, true
 					}
@@ -580,7 +581,7 @@ collect_globals :: proc(file: ast.File) -> []GlobalExpr {
 	defer shrink(&exprs)
 
 	// Declaration-order const fold for when conditions (e.g. MAP_ENABLED :: !ODIN_BEDROCK).
-	when_expr_map := make_when_expr_map()
+	when_expr_map := make_when_expr_map(file)
 
 	for decl in file.decls {
 		if value_decl, ok := decl.derived.(^ast.Value_Decl); ok {

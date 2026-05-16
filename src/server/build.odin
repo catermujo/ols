@@ -144,12 +144,13 @@ should_collect_file :: proc(file_tags: parser.File_Tags) -> bool {
 
 	if len(file_tags.build) > 0 {
 		when_expr_map := make(map[string]When_Expr, context.temp_allocator)
+		empty_file := ast.File{}
 
 		for key, value in common.config.profile.defines {
-			when_expr_map[key] = resolve_when_ident(when_expr_map, value) or_continue
+			when_expr_map[key] = resolve_when_ident(empty_file, when_expr_map, value) or_continue
 		}
 
-		if when_expr, ok := resolve_when_ident(when_expr_map, "ODIN_OS"); ok {
+		if when_expr, ok := resolve_when_ident(empty_file, when_expr_map, "ODIN_OS"); ok {
 			if s, ok := when_expr.(string); ok {
 				if used_os, ok := os_string_to_enum[when_expr.(string)]; ok {
 					found := false
