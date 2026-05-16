@@ -5,6 +5,7 @@ ConfigProfile :: struct {
 	arch:         string,
 	name:         string,
 	checker_path: [dynamic]string,
+	checker_match_paths: [dynamic]string,
 	defines:      map[string]string,
 	exclude_path: [dynamic]string,
 }
@@ -64,6 +65,7 @@ Config :: struct {
 	completion_exclude_attributes:           map[string]struct{},
 	client_name:                             string,
 	profile:                                 ConfigProfile,
+	checker_profiles:                        [dynamic]ConfigProfile,
 	builtin_path:                            string,
 }
 
