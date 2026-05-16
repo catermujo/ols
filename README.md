@@ -105,6 +105,8 @@ Options:
 
 - `enable_checker_only_saved`: Turns on only calling the checker on the package being saved. _(Enabled by default)_
 
+- `enable_checker_on_open`: Runs checker diagnostics when an Odin file is opened.
+
 - `enable_checker_workspace_diagnostics`: Turns on running all workspace diagnostics using odin check. This is currently experimental and may cause problems. A better option is using the `checker_path` feature to explicity tell `ols` the projects that it should check. (experimental).
 
 - `enable_auto_import`: Automatically import packages that aren't in your import on completion.
