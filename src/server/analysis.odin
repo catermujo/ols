@@ -3733,6 +3733,7 @@ resolve_location_symbol_selector :: proc(
 	case SymbolStructValue:
 		for name, i in v.names {
 			if strings.compare(name, field) == 0 {
+				symbol.name = field
 				symbol.range = v.ranges[i]
 				if i < len(v.types) && v.types[i] != nil && v.types[i].pos.file != "" {
 					symbol.uri = common.create_uri(v.types[i].pos.file, ast_context.allocator).uri
@@ -3745,6 +3746,7 @@ resolve_location_symbol_selector :: proc(
 	case SymbolBitFieldValue:
 		for name, i in v.names {
 			if strings.compare(name, field) == 0 {
+				symbol.name = field
 				symbol.range = v.ranges[i]
 				if i < len(v.types) && v.types[i] != nil && v.types[i].pos.file != "" {
 					symbol.uri = common.create_uri(v.types[i].pos.file, ast_context.allocator).uri
