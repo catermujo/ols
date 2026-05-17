@@ -1179,6 +1179,35 @@ main :: proc() {
 }
 
 @(test)
+ast_goto_selector_field_nested_using_skip_alias :: proc(t: ^testing.T) {
+	source := test.Source{
+		main = `package test
+Config :: struct {
+    seed: int,
+}
+Gen_Persist :: struct {
+    using cfg: Config,
+}
+Sim :: struct {
+    using saved: Gen_Persist,
+}
+use :: proc(s: ^Sim) {
+    _ = s.c{*}fg.seed
+}
+`,
+		config = {enable_definition_skip_alias = true},
+	}
+
+	locations := []common.Location{
+		{
+			range = {start = {line = 5, character = 10}, end = {line = 5, character = 13}},
+		},
+	}
+
+	test.expect_definition_locations(t, &source, locations[:])
+}
+
+@(test)
 ast_goto_identifier_definition_skip_alias_when_config_alias_preserves_location :: proc(t: ^testing.T) {
 	packages := make([dynamic]test.Package, context.temp_allocator)
 
