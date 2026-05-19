@@ -100,6 +100,13 @@ get_code_actions :: proc(document: ^Document, range: common.Range, config: ^comm
 		)
 	}
 
+	add_inline_action(
+		&ast_context,
+		&position_context,
+		strings.clone(document.uri.uri, context.temp_allocator),
+		&actions,
+	)
+
 	return actions[:], true
 }
 
