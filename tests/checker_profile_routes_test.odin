@@ -6,7 +6,7 @@ import "core:testing"
 import "src:common"
 import "src:server"
 
-test_root_path :: proc() -> string {
+checker_profile_test_root_path :: proc() -> string {
 	when ODIN_OS == .Windows {
 		return "C:/repo"
 	} else {
@@ -16,7 +16,7 @@ test_root_path :: proc() -> string {
 
 @(test)
 checker_profile_routes_select_longest_match :: proc(t: ^testing.T) {
-	root := test_root_path()
+	root := checker_profile_test_root_path()
 
 	config := common.Config{}
 	config.checker_profiles = make([dynamic]common.ConfigProfile)
@@ -50,7 +50,7 @@ checker_profile_routes_select_longest_match :: proc(t: ^testing.T) {
 
 @(test)
 checker_profile_routes_fallback_to_default_profile :: proc(t: ^testing.T) {
-	root := test_root_path()
+	root := checker_profile_test_root_path()
 
 	config := common.Config{}
 	config.checker_profiles = make([dynamic]common.ConfigProfile)
@@ -68,7 +68,7 @@ checker_profile_routes_fallback_to_default_profile :: proc(t: ^testing.T) {
 
 @(test)
 checker_profile_routes_can_check_directory_without_checker_path :: proc(t: ^testing.T) {
-	root := test_root_path()
+	root := checker_profile_test_root_path()
 
 	config := common.Config{}
 	config.checker_profiles = make([dynamic]common.ConfigProfile)

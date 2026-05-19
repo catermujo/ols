@@ -666,10 +666,11 @@ expect_rename_locations :: proc(
 	expect_locations: []common.Location,
 	expect_excluded: []common.Location = nil,
 ) {
+	cursor := source_remove_cursor(src)
 	setup(src)
 	defer teardown(src)
 
-	edit, ok := server.get_rename(src.document, new_name, src.position)
+	edit, ok := server.get_rename(src.document, new_name, cursor)
 	if !ok {
 		log.error("Failed to get rename edits")
 		return

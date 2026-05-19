@@ -1552,9 +1552,9 @@ internal_resolve_type_expression :: proc(ast_context: ^AstContext, node: ^ast.Ex
 		ok = internal_resolve_type_expression(ast_context, v.x, out)
 		return ok
 	case ^ast.Ternary_When_Expr:
-		when_expr_map := make_when_expr_map()
-		register_when_consts_from_globals(&when_expr_map, ast_context.globals)
-		if resolve_when_condition(v.cond, when_expr_map) {
+		when_expr_map := make_when_expr_map(ast_context.file)
+		register_when_consts_from_globals(&when_expr_map, ast_context.file, ast_context.globals)
+		if resolve_when_condition(ast_context.file, v.cond, when_expr_map) {
 			ok = internal_resolve_type_expression(ast_context, v.x, out)
 			return ok
 		}

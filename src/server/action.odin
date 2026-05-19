@@ -119,6 +119,13 @@ get_code_actions :: proc(
 		)
 	}
 
+	add_inline_action(
+		&ast_context,
+		&position_context,
+		strings.clone(document.uri.uri, context.temp_allocator),
+		&actions,
+	)
+
 	return actions[:], true
 }
 
