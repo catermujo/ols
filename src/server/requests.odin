@@ -886,7 +886,7 @@ request_initialize :: proc(
 				hoverProvider = config.enable_hover,
 				documentFormattingProvider = config.enable_format,
 				documentLinkProvider = {resolveProvider = false},
-				codeActionProvider = {resolveProvider = false, codeActionKinds = {"refactor.rewrite"}},
+				codeActionProvider = {resolveProvider = false, codeActionKinds = {"refactor.rewrite", "refactor.inline"}},
 			},
 		},
 		id = id,
