@@ -2038,6 +2038,17 @@ is_generated_uri :: #force_inline proc(uri: string) -> bool {
 	return strings.contains(uri, ".generated.odin")
 }
 
+symbol_has_location :: #force_inline proc(symbol: Symbol) -> bool {
+	if symbol.uri != "" {
+		return true
+	}
+
+	return symbol.range.start.line > 0 ||
+		symbol.range.start.character > 0 ||
+		symbol.range.end.line > 0 ||
+		symbol.range.end.character > 0
+}
+
 lookup_package_import_field_symbol :: proc(
 	field_name: string,
 	context_pkg: string,
@@ -3729,10 +3740,18 @@ resolve_location_symbol_selector :: proc(
 				}
 			}
 			if resolved_alias, ok := resolve_alias_symbol_target(ast_context, pkg, selector.pos.file); ok {
-				pkg = resolved_alias
+				if symbol_has_location(pkg) && !symbol_has_location(resolved_alias) {
+					// Keep the original package field location when alias expansion loses range/uri (e.g. #config).
+				} else {
+					pkg = resolved_alias
+				}
 			}
 			if resolved_basic, ok := resolve_basic_symbol_target(ast_context, pkg, selector.pos.file); ok {
-				pkg = resolved_basic
+				if symbol_has_location(pkg) && !symbol_has_location(resolved_basic) {
+					// Keep the original package field location when basic resolution loses range/uri.
+				} else {
+					pkg = resolved_basic
+				}
 			}
 			symbol.range = pkg.range
 			symbol.uri = pkg.uri

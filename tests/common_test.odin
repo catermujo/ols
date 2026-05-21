@@ -1,6 +1,8 @@
 package tests
 
 import "core:log"
+import "core:os"
+import "core:fmt"
 import "core:testing"
 import "src:common"
 
@@ -79,4 +81,44 @@ common_parse_uri :: proc(t: ^testing.T) {
 			}
 		}
 	}
+}
+
+@(test)
+common_create_uri_expands_home_dir :: proc(t: ^testing.T) {
+	when ODIN_OS == .Windows {
+		return
+	}
+
+	home := os.get_env("HOME", context.temp_allocator)
+	if home == "" {
+		return
+	}
+
+	result := common.create_uri("~/ols-uri-test.odin", context.temp_allocator)
+	expected := common.create_uri(fmt.tprintf("%s/ols-uri-test.odin", home), context.temp_allocator)
+
+	testing.expect_value(t, result.uri, expected.uri)
+	testing.expect_value(t, result.path, expected.path)
+}
+
+@(test)
+common_parse_uri_file_tilde_expands_home_dir :: proc(t: ^testing.T) {
+	when ODIN_OS == .Windows {
+		return
+	}
+
+	home := os.get_env("HOME", context.temp_allocator)
+	if home == "" {
+		return
+	}
+
+	result, ok := common.parse_uri("file:///~/ols-uri-test.odin", context.temp_allocator)
+	if !ok {
+		log.error(t, "failed to parse file:///~/ uri")
+		return
+	}
+
+	expected := common.create_uri(fmt.tprintf("%s/ols-uri-test.odin", home), context.temp_allocator)
+	testing.expect_value(t, result.uri, expected.uri)
+	testing.expect_value(t, result.path, expected.path)
 }
