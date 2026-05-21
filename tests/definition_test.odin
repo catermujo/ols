@@ -1046,6 +1046,37 @@ ast_goto_selector_reexported_through_package_alias :: proc(t: ^testing.T) {
 }
 
 @(test)
+ast_goto_selector_package_field_config_symbol :: proc(t: ^testing.T) {
+	packages := make([dynamic]test.Package, context.temp_allocator)
+
+	append(&packages, test.Package {
+		pkg = "sdl3",
+		source = `package sdl3
+MIXER :: #config(SDL3_MIXER, false)
+`,
+	})
+
+	source := test.Source {
+		main = `package test
+import sdl "sdl3"
+
+when sdl.MIX{*}ER {
+}
+`,
+		packages = packages[:],
+	}
+
+	locations := []common.Location {
+		{
+			uri = "file://test/sdl3/package.odin",
+			range = {start = {line = 1, character = 0}, end = {line = 1, character = 5}},
+		},
+	}
+
+	test.expect_definition_locations(t, &source, locations[:])
+}
+
+@(test)
 ast_goto_proc_group_overload_with_selector :: proc(t: ^testing.T) {
 	packages := make([dynamic]test.Package, context.temp_allocator)
 
