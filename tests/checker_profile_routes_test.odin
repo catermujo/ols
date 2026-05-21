@@ -1,12 +1,13 @@
 package tests
 
 import path "core:path/slashpath"
+import "core:os"
 import "core:testing"
 
 import "src:common"
 import "src:server"
 
-test_root_path :: proc() -> string {
+checker_profile_test_root_path :: proc() -> string {
 	when ODIN_OS == .Windows {
 		return "C:/repo"
 	} else {
@@ -16,7 +17,7 @@ test_root_path :: proc() -> string {
 
 @(test)
 checker_profile_routes_select_longest_match :: proc(t: ^testing.T) {
-	root := test_root_path()
+	root := checker_profile_test_root_path()
 
 	config := common.Config{}
 	config.checker_profiles = make([dynamic]common.ConfigProfile)
@@ -50,7 +51,7 @@ checker_profile_routes_select_longest_match :: proc(t: ^testing.T) {
 
 @(test)
 checker_profile_routes_fallback_to_default_profile :: proc(t: ^testing.T) {
-	root := test_root_path()
+	root := checker_profile_test_root_path()
 
 	config := common.Config{}
 	config.checker_profiles = make([dynamic]common.ConfigProfile)
@@ -68,7 +69,7 @@ checker_profile_routes_fallback_to_default_profile :: proc(t: ^testing.T) {
 
 @(test)
 checker_profile_routes_can_check_directory_without_checker_path :: proc(t: ^testing.T) {
-	root := test_root_path()
+	root := checker_profile_test_root_path()
 
 	config := common.Config{}
 	config.checker_profiles = make([dynamic]common.ConfigProfile)
@@ -86,5 +87,53 @@ checker_profile_routes_can_check_directory_without_checker_path :: proc(t: ^test
 
 	testing.expect_value(t, 1, len(targets))
 	testing.expect_value(t, targets[0].path, path.join({root, "rt", "drift", "math"}))
+	testing.expect_value(t, targets[0].profile_index, 0)
+}
+
+@(test)
+checker_profile_routes_expands_home_dir_in_checker_path :: proc(t: ^testing.T) {
+	home := os.get_env("HOME", context.temp_allocator)
+	if home == "" {
+		return
+	}
+
+	config := common.Config{}
+	config.checker_profiles = make([dynamic]common.ConfigProfile)
+	config.profile = common.ConfigProfile{name = "default"}
+	config.profile.checker_path = make([dynamic]string)
+	append(&config.profile.checker_path, "~/repo/entry/main.odin")
+
+	saved_file := path.join({home, "repo", "src", "foo.odin"})
+	targets := server.resolve_check_targets(.Saved, {saved_file}, &config)
+
+	testing.expect_value(t, 1, len(targets))
+	testing.expect_value(t, targets[0].path, path.join({home, "repo", "entry", "main.odin"}))
+	testing.expect_value(t, targets[0].profile_index, -1)
+}
+
+@(test)
+checker_profile_routes_expands_home_dir_in_checker_match_paths :: proc(t: ^testing.T) {
+	home := os.get_env("HOME", context.temp_allocator)
+	if home == "" {
+		return
+	}
+
+	config := common.Config{}
+	config.checker_profiles = make([dynamic]common.ConfigProfile)
+	config.profile = common.ConfigProfile{name = "default"}
+	config.profile.checker_path = make([dynamic]string)
+
+	rt_profile := common.ConfigProfile{name = "rt"}
+	rt_profile.checker_path = make([dynamic]string)
+	rt_profile.checker_match_paths = make([dynamic]string)
+	append(&rt_profile.checker_path, path.join({home, "entry", "rt.odin"}))
+	append(&rt_profile.checker_match_paths, "~/repo/rt")
+	append(&config.checker_profiles, rt_profile)
+
+	saved_file := path.join({home, "repo", "rt", "dio", "mixer.odin"})
+	targets := server.resolve_check_targets(.Saved, {saved_file}, &config)
+
+	testing.expect_value(t, 1, len(targets))
+	testing.expect_value(t, targets[0].path, path.join({home, "entry", "rt.odin"}))
 	testing.expect_value(t, targets[0].profile_index, 0)
 }

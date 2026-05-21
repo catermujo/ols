@@ -411,6 +411,7 @@ Check_Target :: struct {
 @(private = "file")
 normalize_checker_match_path :: proc(raw: string) -> string {
 	path := raw
+	path, _ = common.resolve_home_dir(path, context.temp_allocator)
 	when ODIN_OS == .Windows {
 		path = common.get_case_sensitive_path(path, context.temp_allocator)
 	}
@@ -498,21 +499,29 @@ resolve_check_targets :: proc(mode: Check_Mode, paths: []string, config: ^common
 			if p == "" {
 				continue
 			}
+			normalized_path := normalize_checker_match_path(p)
+			if normalized_path == "" {
+				continue
+			}
 
-			profile_index := select_checker_profile_index(config, p)
+			profile_index := select_checker_profile_index(config, normalized_path)
 			profile := select_checker_profile(config, profile_index)
 
 			if len(profile.checker_path) > 0 {
 				for checker_path in profile.checker_path {
-					if checker_path in config.checker_skip_packages {
+					normalized_checker_path := normalize_checker_match_path(checker_path)
+					if normalized_checker_path == "" {
 						continue
 					}
-					append_check_target(&results, &seen, checker_path, profile_index)
+					if normalized_checker_path in config.checker_skip_packages {
+						continue
+					}
+					append_check_target(&results, &seen, normalized_checker_path, profile_index)
 				}
 				continue
 			}
 
-			dir := path.dir(p, context.temp_allocator)
+			dir := path.dir(normalized_path, context.temp_allocator)
 			if dir in config.checker_skip_packages {
 				continue
 			}
@@ -524,20 +533,28 @@ resolve_check_targets :: proc(mode: Check_Mode, paths: []string, config: ^common
 
 	if len(config.profile.checker_path) > 0 {
 		for checker_path in config.profile.checker_path {
-			if checker_path in config.checker_skip_packages {
+			normalized_checker_path := normalize_checker_match_path(checker_path)
+			if normalized_checker_path == "" {
 				continue
 			}
-			append_check_target(&results, &seen, checker_path, -1)
+			if normalized_checker_path in config.checker_skip_packages {
+				continue
+			}
+			append_check_target(&results, &seen, normalized_checker_path, -1)
 		}
 		return results[:]
 	}
 
 	if mode == .Workspace && config.enable_checker_workspace_diagnostics {
 		for p in fallback_find_odin_directories(config) {
-			if p in config.checker_skip_packages {
+			normalized_path := normalize_checker_match_path(p)
+			if normalized_path == "" {
 				continue
 			}
-			append_check_target(&results, &seen, p, -1)
+			if normalized_path in config.checker_skip_packages {
+				continue
+			}
+			append_check_target(&results, &seen, normalized_path, -1)
 		}
 		return results[:]
 	}
@@ -758,7 +775,7 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config, p
 				continue
 			}
 
-			path := error.pos.file
+			path := normalize_checker_match_path(error.pos.file)
 
 			when ODIN_OS == .Windows {
 				path = common.get_case_sensitive_path(path, context.temp_allocator)
@@ -855,6 +872,10 @@ start_check_process :: proc(
 	bool,
 ) {
 	command: string
+	normalized_check_path := normalize_checker_match_path(check_path)
+	if normalized_check_path == "" {
+		return CheckProcess{}, false
+	}
 
 	if config.odin_command != "" {
 		command = config.odin_command
@@ -862,9 +883,9 @@ start_check_process :: proc(
 		command = "odin"
 	}
 
-	entry_point_opt := filepath.ext(check_path) == ".odin" ? "-file" : "-no-entry-point"
+	entry_point_opt := filepath.ext(normalized_check_path) == ".odin" ? "-file" : "-no-entry-point"
 	cmd := make([dynamic]string, context.temp_allocator)
-	append(&cmd, command, "check", check_path)
+	append(&cmd, command, "check", normalized_check_path)
 	for c in collections {
 		append(&cmd, c)
 	}
@@ -900,7 +921,7 @@ start_check_process :: proc(
 	}
 
 	buffer := make([dynamic]u8, 0, mem.Kilobyte * 200, context.temp_allocator)
-	return CheckProcess{path = check_path, process = p, reader = r, buffer = buffer}, true
+	return CheckProcess{path = normalized_check_path, process = p, reader = r, buffer = buffer}, true
 }
 
 @(private = "file")
