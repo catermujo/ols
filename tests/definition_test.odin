@@ -829,6 +829,35 @@ ast_goto_nested_struct_field_selector_definition :: proc(t: ^testing.T) {
 }
 
 @(test)
+ast_goto_nested_inline_struct_field_selector_definition :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+
+		State :: struct {
+			font: struct {
+				using _: struct {
+					pad: int,
+				}
+				ctx: rawptr,
+			},
+		}
+
+		g: State
+
+		main :: proc() {
+			_ = g.font.ct{*}x
+		}
+		`,
+	}
+
+	location := common.Location {
+		range = {start = {line = 7, character = 4}, end = {line = 7, character = 7}},
+	}
+
+	test.expect_definition_locations(t, &source, {location})
+}
+
+@(test)
 ast_goto_proc_named_param :: proc (t: ^testing.T) {
 	source := test.Source {
 		main     = `package test
