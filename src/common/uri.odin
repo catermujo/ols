@@ -15,15 +15,20 @@ Uri :: struct {
 //Note(Daniel, This is an extremely incomplete uri parser and for now ignores fragment and query and only handles file schema)
 parse_uri :: proc(value: string, allocator: mem.Allocator) -> (Uri, bool) {
 	uri: Uri
-	starts := "file:///"
+	starts := "file://"
 
 	start_index := len(starts)
 	if !starts_with(value, starts) {
 		return {}, false
 	}
 
-	when ODIN_OS != .Windows {
-		start_index -= 1
+	if starts_with(value, "file:///") {
+		when ODIN_OS == .Windows {
+			start_index = len("file:///")
+		} else {
+			// Keep the leading '/' for absolute unix paths.
+			start_index = len("file://")
+		}
 	}
 
 	return create_uri(value[start_index:], allocator), true
@@ -31,7 +36,14 @@ parse_uri :: proc(value: string, allocator: mem.Allocator) -> (Uri, bool) {
 
 //Note(Daniel, Again some really incomplete and scuffed uri writer)
 create_uri :: proc(path: string, allocator: mem.Allocator) -> Uri {
-	path_forward, _ := filepath.replace_separators(path, '/', context.temp_allocator)
+	normalized_path := path
+	normalized_path, _ = resolve_home_dir(normalized_path, context.temp_allocator)
+	when ODIN_OS != .Windows {
+		if strings.has_prefix(normalized_path, "/~") {
+			normalized_path, _ = resolve_home_dir(normalized_path[1:], context.temp_allocator)
+		}
+	}
+	path_forward, _ := filepath.replace_separators(normalized_path, '/', context.temp_allocator)
 
 	builder := strings.builder_make(allocator)
 
@@ -62,7 +74,13 @@ uri_to_path :: proc(uri: string, allocator: mem.Allocator) -> string {
 	when ODIN_OS == .Windows {
 		// file:///C:/foo -> /C:/foo after trim, strip leading /
 		path = strings.trim_prefix(path, "/")
+	} else {
+		// file:///~/foo -> /~/foo after trim; drop the extra slash so home expansion can handle it.
+		if strings.has_prefix(path, "/~") {
+			path = path[1:]
+		}
 	}
+	path, _ = resolve_home_dir(path, allocator)
 	return path
 }
 
