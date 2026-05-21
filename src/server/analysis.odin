@@ -387,6 +387,11 @@ resolve_base_symbol :: proc(ast_context: ^AstContext, symbol: Symbol, bypass_dis
 		expr = symbol.value_expr
 	}
 	if expr == nil {
+		// Converting aggregate symbols to synthetic AST nodes drops field/member metadata.
+		#partial switch _ in symbol.value {
+		case SymbolStructValue, SymbolEnumValue, SymbolUnionValue, SymbolBitSetValue, SymbolBitFieldValue:
+			return symbol
+		}
 		file := common.uri_to_path(symbol.uri, context.temp_allocator)
 		expr = symbol_to_expr(symbol, file, context.temp_allocator)
 	}

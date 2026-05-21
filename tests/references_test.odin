@@ -1579,6 +1579,33 @@ ast_references_nested_using_struct_field :: proc(t: ^testing.T) {
 }
 
 @(test)
+ast_references_nested_inline_struct_field :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+		State :: struct {
+			font: struct {
+				using _: struct {
+					pad: int,
+				}
+				ctx: rawptr,
+			},
+		}
+
+		main :: proc() {
+			state: State
+			_ = state.font.ct{*}x
+		}
+	`,
+	}
+	locations := []common.Location {
+		{range = {start = {line = 6, character = 4}, end = {line = 6, character = 7}}},
+		{range = {start = {line = 12, character = 18}, end = {line = 12, character = 21}}},
+	}
+
+	test.expect_reference_locations(t, &source, locations[:])
+}
+
+@(test)
 ast_references_nested_using_bit_field_field :: proc(t: ^testing.T) {
 	source := test.Source {
 		main = `package test
