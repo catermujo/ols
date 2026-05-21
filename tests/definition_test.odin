@@ -1106,6 +1106,39 @@ when sdl.MIX{*}ER {
 }
 
 @(test)
+ast_goto_selector_imported_package_distinct_type_in_when_branch :: proc(t: ^testing.T) {
+	packages := make([dynamic]test.Package, context.temp_allocator)
+
+	append(&packages, test.Package {
+		pkg = "msdf",
+		source = `package msdf
+FontHandle :: distinct rawptr
+`,
+	})
+
+	source := test.Source {
+		main = `package test
+import "msdf"
+
+USE_MSDF :: #config(USE_MSDF, false)
+when USE_MSDF {
+	MSDF_Font_Handle :: msdf.FontHand{*}le
+}
+`,
+		packages = packages[:],
+	}
+
+	locations := []common.Location {
+		{
+			uri = "file://test/msdf/package.odin",
+			range = {start = {line = 1, character = 0}, end = {line = 1, character = 10}},
+		},
+	}
+
+	test.expect_definition_locations(t, &source, locations[:])
+}
+
+@(test)
 ast_goto_proc_group_overload_with_selector :: proc(t: ^testing.T) {
 	packages := make([dynamic]test.Package, context.temp_allocator)
 

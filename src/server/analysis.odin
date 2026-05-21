@@ -2054,6 +2054,18 @@ symbol_has_location :: #force_inline proc(symbol: Symbol) -> bool {
 		symbol.range.end.character > 0
 }
 
+symbol_has_precise_range :: #force_inline proc(symbol: Symbol) -> bool {
+	if symbol.range.start.line != symbol.range.end.line {
+		return true
+	}
+
+	if symbol.range.start.character != symbol.range.end.character {
+		return true
+	}
+
+	return false
+}
+
 lookup_package_import_field_symbol :: proc(
 	field_name: string,
 	context_pkg: string,
@@ -3745,14 +3757,14 @@ resolve_location_symbol_selector :: proc(
 				}
 			}
 			if resolved_alias, ok := resolve_alias_symbol_target(ast_context, pkg, selector.pos.file); ok {
-				if symbol_has_location(pkg) && !symbol_has_location(resolved_alias) {
+				if symbol_has_precise_range(pkg) && !symbol_has_precise_range(resolved_alias) {
 					// Keep the original package field location when alias expansion loses range/uri (e.g. #config).
 				} else {
 					pkg = resolved_alias
 				}
 			}
 			if resolved_basic, ok := resolve_basic_symbol_target(ast_context, pkg, selector.pos.file); ok {
-				if symbol_has_location(pkg) && !symbol_has_location(resolved_basic) {
+				if symbol_has_precise_range(pkg) && !symbol_has_precise_range(resolved_basic) {
 					// Keep the original package field location when basic resolution loses range/uri.
 				} else {
 					pkg = resolved_basic
