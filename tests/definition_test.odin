@@ -1,6 +1,7 @@
 package tests
 
 import "core:fmt"
+import "core:strings"
 import "core:testing"
 
 import "src:common"
@@ -765,6 +766,42 @@ ast_goto_field_definition_with_selector_expr_using_imported_package_uri :: proc(
 	location := common.Location {
 		uri = "file://test/gfxpkg/package.odin",
 		range = {start = {line = 3, character = 5}, end = {line = 3, character = 9}},
+	}
+
+	test.expect_definition_locations(t, &source, {location})
+}
+
+@(test)
+ast_goto_implicit_enum_member_in_foreign_inline_enum_large_offset :: proc(t: ^testing.T) {
+	pad_count :: 80
+	builder := strings.builder_make(context.temp_allocator)
+	strings.write_string(&builder, "package dep\n\n")
+	for i in 0 ..< pad_count {
+		fmt.sbprint(&builder, "pad_", i, " :: ", i, "\n", sep = "")
+	}
+	strings.write_string(&builder, "Thing :: struct {\n\tkind: enum {\n\t\t\t\t\t\t\t\t\t\tAlpha,\n\t\t\t\t\t\t\t\t\t\tBeta,\n\t},\n}\n")
+	dep_source := strings.to_string(builder)
+
+	source := test.Source {
+		main = `package test
+		import dep "dep"
+
+		main :: proc() {
+			t: dep.Thing
+			t.kind = .Al{*}pha
+		}
+		`,
+		packages = {
+			{
+				pkg = "dep",
+				source = dep_source,
+			},
+		},
+	}
+
+	location := common.Location {
+		uri = "file://test/dep/package.odin",
+		range = {start = {line = 84, character = 10}, end = {line = 84, character = 15}},
 	}
 
 	test.expect_definition_locations(t, &source, {location})
