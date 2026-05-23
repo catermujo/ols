@@ -4510,7 +4510,7 @@ make_symbol_enum_from_ast :: proc(
 	inlined := false,
 ) -> Symbol {
 	symbol := Symbol {
-		range = common.get_token_range(v, ast_context.file.src),
+		range = get_node_range_for_ast_context(ast_context, v),
 		type  = .Enum,
 		name  = name,
 		pkg   = get_package_from_node(v.node),
@@ -4528,7 +4528,7 @@ make_symbol_enum_from_ast :: proc(
 	values := make([dynamic]^ast.Expr, ast_context.allocator)
 
 	for n in v.fields {
-		name, range, value := get_enum_field_name_range_value(n, ast_context.file.src)
+		name, range, value := get_enum_field_name_range_value_with_context(ast_context, n)
 		append(&names, name)
 		append(&ranges, range)
 		append(&values, value)
@@ -4546,6 +4546,27 @@ make_symbol_enum_from_ast :: proc(
 	}
 
 	return symbol
+}
+
+get_enum_field_name_range_value_with_context :: proc(
+	ast_context: ^AstContext,
+	n: ^ast.Expr,
+) -> (
+	string,
+	common.Range,
+	^ast.Expr,
+) {
+	if ident, ok := n.derived.(^ast.Ident); ok {
+		return ident.name, get_node_range_for_ast_context(ast_context, ident), nil
+	}
+	if field, ok := n.derived.(^ast.Field_Value); ok {
+		if ident, ok := field.field.derived.(^ast.Ident); ok {
+			return ident.name, get_node_range_for_ast_context(ast_context, ident), field.value
+		} else if binary, ok := field.field.derived.(^ast.Binary_Expr); ok {
+			return binary.left.derived.(^ast.Ident).name, get_node_range_for_ast_context(ast_context, binary), binary.right
+		}
+	}
+	return "", {}, nil
 }
 
 get_enum_field_name_range_value :: proc(n: ^ast.Expr, document_text: string) -> (string, common.Range, ^ast.Expr) {
@@ -4596,7 +4617,6 @@ make_symbol_struct_from_ast :: proc(
 	attributes: []^ast.Attribute,
 	inlined := false,
 ) -> Symbol {
-	node := v.node
 	symbol := Symbol {
 		range = common.get_token_range(v, ast_context.file.src),
 		type  = .Struct,
