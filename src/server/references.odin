@@ -889,12 +889,6 @@ resolve_references :: proc(
 		}
 	}
 
-	if resolve_flag == .Field && target_name != "" {
-		for location in collect_implicit_selector_named_locations(document, target_name, ast_context.allocator) {
-			append_location_unique(&locations, location, ast_context.allocator)
-		}
-	}
-
 	if .Local in symbol.flags || current_file_only {
 		return locations[:], true
 	}
@@ -1034,11 +1028,6 @@ resolve_references :: proc(
 				}
 			}
 
-			if resolve_flag == .Field && target_name != "" {
-				for location in collect_implicit_selector_named_locations(&document, target_name, ast_context.allocator) {
-					append_location_unique(&locations, location, ast_context.allocator)
-				}
-			}
 		}
 	}
 

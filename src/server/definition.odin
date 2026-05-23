@@ -317,6 +317,78 @@ symbol_has_useful_location :: proc(symbol: Symbol) -> bool {
 		symbol.range.end.character > 0
 }
 
+is_config_backed_symbol :: proc(symbol: Symbol, file: string) -> bool {
+	if symbol.name == "" || symbol.pkg == "" {
+		return false
+	}
+
+	candidate, lookup_ok := lookup(symbol.name, symbol.pkg, file)
+	if !lookup_ok {
+		return false
+	}
+
+	generic, generic_ok := candidate.value.(SymbolGenericValue)
+	if !generic_ok || generic.expr == nil {
+		return false
+	}
+
+	if call_expr, call_ok := generic.expr.derived.(^ast.Call_Expr); call_ok {
+		if directive, directive_ok := call_expr.expr.derived.(^ast.Basic_Directive); directive_ok {
+			return directive.name == "config"
+		}
+	}
+
+	if directive, directive_ok := generic.expr.derived.(^ast.Basic_Directive); directive_ok {
+		return directive.name == "config"
+	}
+
+	return false
+}
+
+is_config_selector_alias_global :: proc(
+	ast_context: ^AstContext,
+	symbol: Symbol,
+	file: string,
+) -> bool {
+	if symbol.name == "" || symbol.pkg != ast_context.document_package {
+		return false
+	}
+
+	global, global_ok := ast_context.globals[symbol.name]
+	if !global_ok || global.expr == nil {
+		return false
+	}
+
+	selector, selector_ok := global.expr.derived.(^ast.Selector_Expr)
+	if !selector_ok || selector.expr == nil || selector.field == nil {
+		return false
+	}
+
+	base_ident, base_ok := selector.expr.derived.(^ast.Ident)
+	field_ident, field_ok := selector.field.derived.(^ast.Ident)
+	if !base_ok || !field_ok {
+		return false
+	}
+
+	target_pkg := ""
+	for imp in ast_context.imports {
+		if imp.base == base_ident.name {
+			target_pkg = imp.name
+			break
+		}
+	}
+	if target_pkg == "" {
+		return false
+	}
+
+	target_symbol, target_ok := lookup(field_ident.name, target_pkg, file)
+	if !target_ok {
+		return false
+	}
+
+	return is_config_backed_symbol(target_symbol, file)
+}
+
 resolve_definition_skip_alias_target :: proc(
 	ast_context: ^AstContext,
 	symbol: Symbol,
@@ -347,13 +419,19 @@ resolve_definition_skip_alias_target :: proc(
 		}
 
 		if resolved_alias, ok := resolve_alias_symbol_target(ast_context, result, file); ok {
-			if symbol_has_useful_location(result) && !symbol_has_useful_location(resolved_alias) {
+			if pending_alias && is_config_selector_alias_global(ast_context, result, file) {
+				// Keep local alias definition for #config-backed values.
+				pending_alias = false
+			} else if pending_alias && is_config_backed_symbol(resolved_alias, file) {
+				// Keep local alias definition for #config-backed values.
+				pending_alias = false
+			} else if symbol_has_useful_location(result) && !symbol_has_useful_location(resolved_alias) {
 				// Keep existing target when alias resolution degrades into a keyword-like symbol with no location.
 				pending_alias = false
 			} else {
-			result = resolved_alias
-			changed = true
-			pending_alias = is_skip_alias_candidate(ast_context, result)
+				result = resolved_alias
+				changed = true
+				pending_alias = is_skip_alias_candidate(ast_context, result)
 			}
 		} else if pending_alias {
 			return {}, false

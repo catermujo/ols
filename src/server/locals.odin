@@ -388,7 +388,6 @@ get_locals_value_decl :: proc(file: ast.File, value_decl: ast.Value_Decl, ast_co
 		flags: bit_set[LocalFlag]
 		expr: ^ast.Expr
 		if len(results) > 0 {
-			result_i := min(len(results) - 1, i)
 			expr = results[result_i]
 		} else if len(value_decl.values) > 0 {
 			value_i := min(len(value_decl.values) - 1, i)

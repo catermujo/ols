@@ -1810,7 +1810,9 @@ resolve_soa_selector_field :: proc(
 resolve_selector_expression :: proc(ast_context: ^AstContext, node: ^ast.Selector_Expr) -> (Symbol, bool) {
 	selector := Symbol{}
 	if ok := internal_resolve_type_expression(ast_context, node.expr, &selector); ok {
-		selector = resolve_base_symbol(ast_context, selector)
+		if _, is_struct := selector.value.(SymbolStructValue); !is_struct {
+			selector = resolve_base_symbol(ast_context, selector)
+		}
 		if resolved_alias, ok := resolve_alias_symbol_target(ast_context, selector, node.pos.file); ok {
 			selector = resolved_alias
 		}
@@ -3618,16 +3620,18 @@ resolve_alias_symbol_target :: proc(
 	}
 
 	if generic, ok := candidate.value.(SymbolGenericValue); ok && generic.expr != nil {
-		if resolved, ok := resolve_type_expression(ast_context, generic.expr); ok {
-			return resolved, true
+		if _, is_ident := generic.expr.derived.(^ast.Ident); is_ident {
+			if resolved, ok := resolve_type_expression(ast_context, generic.expr); ok {
+				return resolved, true
+			}
+		} else if _, is_selector := generic.expr.derived.(^ast.Selector_Expr); is_selector {
+			if resolved, ok := resolve_type_expression(ast_context, generic.expr); ok {
+				return resolved, true
+			}
 		}
-	}
-
-	if reflect.union_variant_typeid(candidate.value) != reflect.union_variant_typeid(symbol.value) ||
-	   candidate.type != symbol.type ||
-	   candidate.range != symbol.range ||
-	   candidate.uri != symbol.uri {
-		return candidate, true
+		// Non alias-like generic symbols (e.g. call expressions, literals, compound values)
+		// should keep the already-resolved symbol to avoid dropping inference/context.
+		return symbol, false
 	}
 
 	return symbol, false
