@@ -180,6 +180,46 @@ count_lines :: proc(text: []u8) -> int {
 	return lines
 }
 
+get_line_character_limit :: proc(text: []u8, target_line: int) -> (int, bool) {
+	if target_line < 0 {
+		return 0, false
+	}
+
+	if len(text) == 0 {
+		return 0, target_line == 0
+	}
+
+	line := 0
+	start := 0
+	i := 0
+
+	for i < len(text) {
+		c := text[i]
+		if c == '\n' || c == '\r' {
+			if line == target_line {
+				return common.get_character_offset_u8_to_u16(i - start, text[start:i]), true
+			}
+
+			if c == '\r' && i + 1 < len(text) && text[i + 1] == '\n' {
+				i += 1
+			}
+
+			line += 1
+			i += 1
+			start = i
+			continue
+		}
+
+		i += 1
+	}
+
+	if line == target_line {
+		return common.get_character_offset_u8_to_u16(len(text) - start, text[start:]), true
+	}
+
+	return 0, false
+}
+
 sanitize_location_ranges :: proc(document: ^Document, locations: ^[dynamic]common.Location) {
 	for i in 0 ..< len(locations^) {
 		loc := &locations[i]
@@ -191,12 +231,15 @@ sanitize_location_ranges :: proc(document: ^Document, locations: ^[dynamic]commo
 
 		lines := 1
 		has_line_info := false
+		line_text: []u8
 		if fullpath == document.fullpath {
-			lines = count_lines(document.text[:document.used_text])
+			line_text = document.text[:document.used_text]
+			lines = count_lines(line_text)
 			has_line_info = true
 		} else if fullpath != "" {
 			if data, err := os.read_entire_file(fullpath, context.temp_allocator); err == nil {
-				lines = count_lines(data)
+				line_text = data
+				lines = count_lines(line_text)
 				has_line_info = true
 			}
 		}
@@ -228,6 +271,19 @@ sanitize_location_ranges :: proc(document: ^Document, locations: ^[dynamic]commo
 		}
 		if loc.range.end.character < 0 {
 			loc.range.end.character = 0
+		}
+
+		if has_line_info {
+			if max_start_char, ok := get_line_character_limit(line_text, loc.range.start.line); ok {
+				loc.range.start.character = clamp(loc.range.start.character, 0, max_start_char)
+			}
+			if max_end_char, ok := get_line_character_limit(line_text, loc.range.end.line); ok {
+				loc.range.end.character = clamp(loc.range.end.character, 0, max_end_char)
+			}
+		}
+
+		if loc.range.end.line == loc.range.start.line && loc.range.end.character < loc.range.start.character {
+			loc.range.end.character = loc.range.start.character
 		}
 	}
 }
