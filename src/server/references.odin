@@ -14,7 +14,6 @@ import "core:slice"
 import "core:strings"
 
 import "src:common"
-import "src:spall"
 
 ReferenceImportCache :: struct {
 	file_imports:         map[string][dynamic]string,
@@ -161,6 +160,10 @@ collect_reference_package_files :: proc(pkg_name: string, paths: ^map[string]str
 	}
 
 	for fullpath in matches {
+		if file_has_ignore_file_tag(fullpath) {
+			continue
+		}
+
 		add_reference_candidate_path(paths, fullpath)
 	}
 }
@@ -295,6 +298,11 @@ reference_import_cache_update_file :: proc(fullpath, src: string) {
 		return
 	}
 
+	if source_has_ignore_file_tag(src) {
+		reference_import_cache_remove_file(fullpath)
+		return
+	}
+
 	import_paths := make(map[string]struct{}, 0, context.temp_allocator)
 	reference_collect_source_import_paths(fullpath, src, &import_paths)
 
@@ -391,8 +399,13 @@ reference_import_cache_ensure_initialized :: proc() {
 				continue
 			}
 
+			source := string(data)
+			if source_has_ignore_file_tag(source) {
+				continue
+			}
+
 			import_paths := make(map[string]struct{}, 0, context.temp_allocator)
-			reference_collect_source_import_paths(fullpath, string(data), &import_paths)
+			reference_collect_source_import_paths(fullpath, source, &import_paths)
 
 			import_list := make([dynamic]string, 0, len(import_paths), context.temp_allocator)
 			for import_path in import_paths {
@@ -493,8 +506,13 @@ reference_import_cache_scan_tree :: proc(root_dir: string) {
 			continue
 		}
 
+		source := string(data)
+		if source_has_ignore_file_tag(source) {
+			continue
+		}
+
 		import_paths := make(map[string]struct{}, 0, context.temp_allocator)
-		reference_collect_source_import_paths(fullpath, string(data), &import_paths)
+		reference_collect_source_import_paths(fullpath, source, &import_paths)
 
 		import_list := make([dynamic]string, 0, len(import_paths), context.temp_allocator)
 		for import_path in import_paths {
@@ -539,8 +557,7 @@ prepare_references :: proc(
 	resolve_flag: ResolveReferenceFlag,
 	ok: bool,
 ) {
-	spall.trace(#procedure, document.fullpath)
-
+	ok = false
 	pkg := ""
 
 	if position_context.enum_type != nil {
@@ -856,8 +873,6 @@ resolve_references :: proc(
 	[]common.Location,
 	bool,
 ) {
-	spall.trace(#procedure, document.fullpath)
-
 	locations := make([dynamic]common.Location, 0, ast_context.allocator)
 	fullpaths := make([dynamic]string, 0, ast_context.allocator)
 
@@ -973,7 +988,11 @@ resolve_references :: proc(
 			pkg      = pkg,
 		}
 
-		ok := parse_file(&p, &file)
+		if source_has_ignore_file_tag(file.src) {
+			continue
+		}
+
+		ok := parser.parse_file(&p, &file)
 
 		if !ok {
 			if !is_ols_builtin_file(fullpath) {

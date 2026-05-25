@@ -16,7 +16,6 @@ import "core:strings"
 import "core:time"
 
 import "src:common"
-import "src:spall"
 
 platform_os: map[string]struct{} = {
 	"windows" = {},
@@ -126,6 +125,10 @@ append_packages :: proc(path: string, pkgs: ^[dynamic]string, skip: map[string]s
 	defer os.walker_destroy(&w)
 	for info in os.walker_walk(&w) {
 		if info.type != .Directory && filepath.ext(info.name) == ".odin" {
+			if file_has_ignore_file_tag(info.fullpath) {
+				continue
+			}
+
 			dir := filepath.dir(info.fullpath)
 			if dir in skip {
 				os.walker_skip_dir(&w)
@@ -172,8 +175,6 @@ should_collect_file :: proc(file_tags: parser.File_Tags) -> bool {
 }
 
 try_build_package :: proc(pkg_name: string) {
-	spall.trace(#procedure, pkg_name)
-
 	if pkg, ok := build_cache.loaded_pkgs[pkg_name]; ok {
 		return
 	}
@@ -184,6 +185,7 @@ try_build_package :: proc(pkg_name: string) {
 		fmt.tprintf("Index package %s", filepath.base(pkg_name)),
 		pkg_name,
 	)
+
 	matches, err := filepath.glob(fmt.tprintf("%v/*.odin", pkg_name), context.temp_allocator)
 
 	if err != nil && err != .Not_Exist {
@@ -222,6 +224,11 @@ try_build_package :: proc(pkg_name: string) {
 				continue
 			}
 
+			source := string(data)
+			if source_has_ignore_file_tag(source) {
+				continue
+			}
+
 			p := parser.Parser {
 				flags = {.Optional_Semicolons},
 			}
@@ -243,11 +250,11 @@ try_build_package :: proc(pkg_name: string) {
 
 			file := ast.File {
 				fullpath = fullpath,
-				src      = string(data),
+				src      = source,
 				pkg      = pkg,
 			}
 
-			ok := parse_file(&p, &file)
+			ok := parser.parse_file(&p, &file)
 
 			if !ok {
 				if !is_ols_builtin_file(fullpath) {
@@ -313,8 +320,6 @@ index_file :: proc(uri: common.Uri, text: string) -> common.Error {
 	ok: bool
 	defer clear_index_cache()
 
-	spall.trace(#procedure, uri.path)
-
 	fullpath := uri.path
 
 	p := parser.Parser {
@@ -347,21 +352,24 @@ index_file :: proc(uri: common.Uri, text: string) -> common.Error {
 		pkg      = pkg,
 	}
 
-	{
-		allocator := context.allocator
-		context.allocator = context.temp_allocator
-		defer context.allocator = allocator
+	corrected_uri := common.create_uri(fullpath, context.temp_allocator)
+	is_ignored := source_has_ignore_file_tag(text)
 
-		ok = parse_file(&p, &file)
+	if !is_ignored {
+		{
+			allocator := context.allocator
+			context.allocator = context.temp_allocator
+			defer context.allocator = allocator
 
-		if !ok {
-			if !is_ols_builtin_file(fullpath) {
-				log.errorf("error in parse file for indexing %v", fullpath)
+			ok = parser.parse_file(&p, &file)
+
+			if !ok {
+				if !is_ols_builtin_file(fullpath) {
+					log.errorf("error in parse file for indexing %v", fullpath)
+				}
 			}
 		}
 	}
-
-	corrected_uri := common.create_uri(fullpath, context.temp_allocator)
 
 	for k, &v in indexer.index.collection.packages {
 		for k2, v2 in v.symbols {
@@ -379,6 +387,12 @@ index_file :: proc(uri: common.Uri, text: string) -> common.Error {
 				}
 			}
 		}
+	}
+
+	if is_ignored {
+		clear_all_file_resolve_cache()
+		reference_import_cache_remove_file(fullpath)
+		return .None
 	}
 
 	if ret := collect_symbols(&indexer.index.collection, file, corrected_uri.uri); ret != .None {
