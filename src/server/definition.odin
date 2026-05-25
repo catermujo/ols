@@ -28,6 +28,10 @@ get_all_package_file_locations :: proc(
 	matches, err := filepath.glob(fmt.tprintf("%v/*.odin", path), context.temp_allocator)
 
 	for match in matches {
+		if file_has_ignore_file_tag(match) {
+			continue
+		}
+
 		uri := common.create_uri(match, context.temp_allocator)
 		location := common.Location {
 			uri = uri.uri,
@@ -56,6 +60,10 @@ append_package_files :: proc(paths: ^[dynamic]string, pkg_path: string) {
 	}
 
 	for match in matches {
+		if file_has_ignore_file_tag(match) {
+			continue
+		}
+
 		append_unique_string(paths, match)
 	}
 }
@@ -105,6 +113,10 @@ find_enum_member_definition_fallback :: proc(
 			fullpath = fullpath,
 			src      = string(data),
 			pkg      = pkg,
+		}
+
+		if source_has_ignore_file_tag(file.src) {
+			continue
 		}
 
 		if !parser.parse_file(&p, &file) {

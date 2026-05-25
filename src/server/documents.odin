@@ -41,6 +41,7 @@ Document :: struct {
 	last_saved_check_fingerprint_set: bool,
 	client_owned:     bool,
 	diagnosed_errors: bool,
+	is_ignored:      bool,
 	ast:              ast.File,
 	imports:          []Package,
 	package_name:     string,
@@ -335,6 +336,14 @@ document_refresh :: proc(document: ^Document, config: ^common.Config, writer: ^W
 	uri := common.create_uri(path, context.temp_allocator)
 
 	remove_diagnostics(.Syntax, uri.uri)
+	if document.is_ignored {
+		remove_diagnostics(.Unused, uri.uri)
+		if writer != nil {
+			push_diagnostics(writer)
+		}
+		return .None
+	}
+
 	check_unused_imports(document, config)
 
 	if writer != nil && !config.disable_parser_errors {
@@ -406,6 +415,12 @@ parse_document :: proc(document: ^Document, config: ^common.Config) -> ([]Parser
 		fullpath = document.fullpath,
 		src      = string(document.text[:document.used_text]),
 		pkg      = pkg,
+	}
+
+	document.is_ignored = source_has_ignore_file_tag(document.ast.src)
+	if document.is_ignored {
+		document.imports = nil
+		return nil, true
 	}
 
 	parser.parse_file(&p, &document.ast)
