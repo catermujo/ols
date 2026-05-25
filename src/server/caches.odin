@@ -163,7 +163,17 @@ remove_package_alias_for_dir :: proc(pkg_dir: string) -> bool {
 
 package_dir_has_odin_files :: proc(pkg_dir: string) -> bool {
 	matches, err := filepath.glob(fmt.tprintf("%s/*.odin", pkg_dir), context.temp_allocator)
-	return err == nil && len(matches) > 0
+	if err != nil {
+		return false
+	}
+
+	for fullpath in matches {
+		if !file_has_ignore_file_tag(fullpath) {
+			return true
+		}
+	}
+
+	return false
 }
 
 //Go through all the collections to find all the possible packages that exists

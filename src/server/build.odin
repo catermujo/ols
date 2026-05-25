@@ -125,6 +125,10 @@ append_packages :: proc(path: string, pkgs: ^[dynamic]string, skip: map[string]s
 	defer os.walker_destroy(&w)
 	for info in os.walker_walk(&w) {
 		if info.type != .Directory && filepath.ext(info.name) == ".odin" {
+			if file_has_ignore_file_tag(info.fullpath) {
+				continue
+			}
+
 			dir := filepath.dir(info.fullpath)
 			if dir in skip {
 				os.walker_skip_dir(&w)
@@ -219,6 +223,11 @@ try_build_package :: proc(pkg_name: string) {
 				continue
 			}
 
+			source := string(data)
+			if source_has_ignore_file_tag(source) {
+				continue
+			}
+
 			p := parser.Parser {
 				flags = {.Optional_Semicolons},
 			}
@@ -240,7 +249,7 @@ try_build_package :: proc(pkg_name: string) {
 
 			file := ast.File {
 				fullpath = fullpath,
-				src      = string(data),
+				src      = source,
 				pkg      = pkg,
 			}
 
@@ -340,21 +349,24 @@ index_file :: proc(uri: common.Uri, text: string) -> common.Error {
 		pkg      = pkg,
 	}
 
-	{
-		allocator := context.allocator
-		context.allocator = context.temp_allocator
-		defer context.allocator = allocator
+	corrected_uri := common.create_uri(fullpath, context.temp_allocator)
+	is_ignored := source_has_ignore_file_tag(text)
 
-		ok = parser.parse_file(&p, &file)
+	if !is_ignored {
+		{
+			allocator := context.allocator
+			context.allocator = context.temp_allocator
+			defer context.allocator = allocator
 
-		if !ok {
-			if !is_ols_builtin_file(fullpath) {
-				log.errorf("error in parse file for indexing %v", fullpath)
+			ok = parser.parse_file(&p, &file)
+
+			if !ok {
+				if !is_ols_builtin_file(fullpath) {
+					log.errorf("error in parse file for indexing %v", fullpath)
+				}
 			}
 		}
 	}
-
-	corrected_uri := common.create_uri(fullpath, context.temp_allocator)
 
 	for k, &v in indexer.index.collection.packages {
 		for k2, v2 in v.symbols {
@@ -372,6 +384,12 @@ index_file :: proc(uri: common.Uri, text: string) -> common.Error {
 				}
 			}
 		}
+	}
+
+	if is_ignored {
+		clear_all_file_resolve_cache()
+		reference_import_cache_remove_file(fullpath)
+		return .None
 	}
 
 	if ret := collect_symbols(&indexer.index.collection, file, corrected_uri.uri); ret != .None {

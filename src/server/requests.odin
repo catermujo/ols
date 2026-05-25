@@ -1237,11 +1237,13 @@ notification_did_open :: proc(
 		return .ParseError
 	}
 
-	check_unused_imports(document, config)
+	if document != nil && !document.is_ignored {
+		check_unused_imports(document, config)
+	}
 
 	push_diagnostics(writer)
 
-	if config.enable_checker_on_open {
+	if config.enable_checker_on_open && (document == nil || !document.is_ignored) {
 		queue_check_request(.Opened, uri.path, config)
 	}
 
@@ -1377,13 +1379,17 @@ notification_did_save :: proc(
 
 	corrected_uri := common.create_uri(fullpath, context.temp_allocator)
 
-	if document != nil {
+	if document != nil && !document.is_ignored {
 		check_unused_imports(document, config)
 	}
 
 	push_diagnostics(writer)
 
 	should_queue_save_check := true
+	if source_has_ignore_file_tag(save_text) {
+		should_queue_save_check = false
+	}
+
 	if document != nil {
 		fingerprint := save_check_content_fingerprint(save_text)
 		if document.last_saved_check_fingerprint_set &&

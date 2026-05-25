@@ -63,18 +63,73 @@ should_skip_directory :: proc(fullpath: string, skip_dirs: map[string]struct{}) 
 	return should_skip
 }
 
+ignore_file_tag_prefix :: "#+ignore"
+
+line_has_ignore_file_tag :: proc(line: string) -> bool {
+	if !strings.starts_with(line, ignore_file_tag_prefix) {
+		return false
+	}
+
+	if len(line) == len(ignore_file_tag_prefix) {
+		return true
+	}
+
+	return strings.is_space(rune(line[len(ignore_file_tag_prefix)]))
+}
+
+has_ignore_file_tag :: proc(source: string) -> bool {
+	line_start := 0
+	for line_start < len(source) {
+		line_end := line_start
+		for line_end < len(source) && source[line_end] != '\n' {
+			line_end += 1
+		}
+
+		trimmed := strings.trim_space(source[line_start:line_end])
+
+		if trimmed == "" {
+			line_start = line_end + 1
+			continue
+		}
+
+		if !strings.starts_with(trimmed, "#+") {
+			return false
+		}
+
+		if line_has_ignore_file_tag(trimmed) {
+			return true
+		}
+
+		line_start = line_end + 1
+	}
+
+	return false
+}
+
+Format_File_Result :: struct {
+	source:  string,
+	ok:      bool,
+	skipped: bool,
+}
+
 format_file :: proc(
 	filepath: string,
 	config: printer.Config,
 	allocator := context.allocator,
-) -> (
-	string,
-	bool,
-) {
+) -> Format_File_Result {
 	if data, err := os.read_entire_file(filepath, allocator); err == nil {
-		return format.format(filepath, string(data), config, {.Optional_Semicolons}, allocator)
+		source := string(data)
+		if has_ignore_file_tag(source) {
+			return Format_File_Result {ok = true, skipped = true}
+		}
+
+		formatted, ok := format.format(filepath, source, config, {.Optional_Semicolons}, allocator)
+		return Format_File_Result {
+			source = formatted,
+			ok     = ok,
+		}
 	} else {
-		return "", false
+		return {}
 	}
 }
 
@@ -141,22 +196,24 @@ main :: proc() {
 		write_failure = !ok
 	} else if os.is_file(args.path) {
 		if args.write {
-			backup_path := strings.concatenate({args.path, "_bk"})
-			defer delete(backup_path)
+			result := format_file(args.path, config, arena_allocator)
+			if !result.skipped && result.ok {
+				backup_path := strings.concatenate({args.path, "_bk"})
+				defer delete(backup_path)
 
-			if data, ok := format_file(args.path, config, arena_allocator); ok {
 				os.rename(args.path, backup_path)
 
-				if err := os.write_entire_file(args.path, transmute([]byte)data); err == nil {
+				if err := os.write_entire_file(args.path, transmute([]byte)result.source); err == nil {
 					os.remove(backup_path)
 				}
-			} else {
+			} else if !result.skipped {
 				fmt.eprintf("Failed to write %v", args.path)
 				write_failure = true
 			}
 		} else {
-			if data, ok := format_file(args.path, config, arena_allocator); ok {
-				fmt.println(data)
+			result := format_file(args.path, config, arena_allocator)
+			if !result.skipped && result.ok {
+				fmt.println(result.source)
 			}
 		}
 	} else if os.is_dir(args.path) {
@@ -177,20 +234,27 @@ main :: proc() {
 			}
 
 			file := info.fullpath
+			result := format_file(file, config, arena_allocator)
+			if result.skipped {
+				watermark = max(watermark, arena.total_used)
+				free_all(arena_allocator)
+				continue
+			}
+
 			files_formatted += 1
 			fmt.println(file)
 
-			if data, ok := format_file(file, config, arena_allocator); ok {
+			if result.ok {
 				if args.write {
 					backup_path := strings.concatenate({file, "_bk"})
 					os.rename(file, backup_path)
 
-					if err := os.write_entire_file(file, transmute([]byte)data); err == nil {
+					if err := os.write_entire_file(file, transmute([]byte)result.source); err == nil {
 						os.remove(backup_path)
 					}
 					delete(backup_path)
 				} else {
-					fmt.println(data)
+					fmt.println(result.source)
 				}
 			} else {
 				fmt.eprintf("Failed to format %v", file)
