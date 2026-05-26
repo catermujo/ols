@@ -46,6 +46,34 @@ main :: proc() {
 }
 
 @(test)
+action_inline_variable_typed_comp_lit_value :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+
+Cmd :: struct {
+	help: string,
+}
+
+main :: proc() {
+	cmd: Cmd = {
+		help = "hello",
+	}
+
+	_ = c{*}md
+}
+`,
+		packages = {},
+	}
+
+	expected := `Cmd{
+		help = "hello",
+	}`
+
+	test.expect_action(t, &source, {INLINE_VARIABLE_ACTION})
+	test.expect_action_with_edit(t, &source, INLINE_VARIABLE_ACTION, expected)
+}
+
+@(test)
 action_inline_function_rewrites_returns_with_tag :: proc(t: ^testing.T) {
 	source := test.Source {
 		main = `package test
