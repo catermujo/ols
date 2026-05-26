@@ -101,6 +101,16 @@ build_inline_value_action :: proc(
 	}
 
 	value_text := ast_context.file.src[resolved_symbol.value_expr.pos.offset:resolved_symbol.value_expr.end.offset]
+	if comp_lit, is_comp_lit := resolved_symbol.value_expr.derived.(^ast.Comp_Lit); is_comp_lit &&
+		comp_lit.type == nil && resolved_symbol.type_expr != nil {
+		type_text := strings.trim_space(
+			ast_context.file.src[resolved_symbol.type_expr.pos.offset:resolved_symbol.type_expr.end.offset],
+		)
+		if type_text != "" {
+			value_text = strings.concatenate({type_text, value_text}, context.temp_allocator)
+		}
+	}
+
 	if strings.trim_space(value_text) == "" {
 		return {}, false
 	}
