@@ -1338,6 +1338,34 @@ use :: proc(s: ^Sim) {
 }
 
 @(test)
+ast_goto_selector_field_nested_using_pointer_chain :: proc(t: ^testing.T) {
+	source := test.Source{
+		main = `package test
+Gen_Base :: struct {
+    ls: int,
+}
+Terrain :: struct {
+    using base: ^Gen_Base,
+}
+Sim :: struct {
+    using dyn: Terrain,
+}
+use :: proc(s: ^Sim) {
+    _ = s.base.l{*}s
+}
+`,
+	}
+
+	locations := []common.Location{
+		{
+			range = {start = {line = 2, character = 4}, end = {line = 2, character = 6}},
+		},
+	}
+
+	test.expect_definition_locations(t, &source, locations[:])
+}
+
+@(test)
 ast_goto_identifier_definition_skip_alias_when_config_alias_preserves_location :: proc(t: ^testing.T) {
 	packages := make([dynamic]test.Package, context.temp_allocator)
 
