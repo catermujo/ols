@@ -1829,6 +1829,45 @@ ast_references_should_skip_declaration :: proc(t: ^testing.T) {
 }
 
 @(test)
+ast_references_skip_alias_global_shows_alias_usages :: proc(t: ^testing.T) {
+	packages := make([dynamic]test.Package, context.temp_allocator)
+
+	append(&packages, test.Package{
+		pkg = "co_pkg",
+		source = `package co_pkg
+vpos2 :: proc(x: int) -> int {
+	return x
+}
+`,
+	})
+
+	source := test.Source{
+		main = `package test
+import co "co_pkg"
+
+vpos :: co.vpos2
+
+main :: proc() {
+	vpos(1)
+	_ = co.vpo{*}s2(2)
+}
+`,
+		packages = packages[:],
+		config = {enable_definition_skip_alias = true},
+	}
+
+	locations := []common.Location{
+		{range = {start = {line = 6, character = 1}, end = {line = 6, character = 5}}},
+		{range = {start = {line = 7, character = 8}, end = {line = 7, character = 13}}},
+	}
+	exclude := []common.Location{
+		{range = {start = {line = 3, character = 0}, end = {line = 3, character = 4}}},
+		{range = {start = {line = 3, character = 11}, end = {line = 3, character = 16}}},
+	}
+
+	test.expect_reference_locations(t, &source, locations[:], exclude[:])
+}
+
 ast_references_struct_poly_field :: proc(t: ^testing.T) {
 	source := test.Source {
 		main = `package test

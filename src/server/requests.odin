@@ -1743,6 +1743,7 @@ request_references :: proc(
 		document,
 		reference_param.position,
 		include_declaration = reference_param.context_.includeDeclaration,
+		config = config,
 	)
 
 	if !ok {
@@ -1781,7 +1782,7 @@ request_highlights :: proc(
 	}
 
 	locations: []common.Location
-	locations, ok = get_references(document, highlight_param.position, true)
+	locations, ok = get_references(document, highlight_param.position, true, config = config)
 
 	if !ok {
 		return .InternalError

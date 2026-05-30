@@ -863,10 +863,146 @@ collect_implicit_selector_named_locations :: proc(
 	return locations[:]
 }
 
+reference_symbols_match :: proc(a, b: Symbol) -> bool {
+	return strings.equal_fold(a.uri, b.uri) && a.range == b.range
+}
+
+reference_location_matches :: proc(uri: string, range: common.Range, location: common.Location) -> bool {
+	return strings.equal_fold(uri, location.uri) && range == location.range
+}
+
+reference_location_in_list :: proc(uri: string, range: common.Range, locations: []common.Location) -> bool {
+	for location in locations {
+		if reference_location_matches(uri, range, location) {
+			return true
+		}
+	}
+
+	return false
+}
+
+alias_definition_target_reference_range :: proc(expr: ^ast.Expr, src: string) -> (common.Range, bool) {
+	if expr == nil {
+		return {}, false
+	}
+
+	#partial switch n in expr.derived {
+	case ^ast.Ident:
+		return common.get_token_range(n, src), true
+	case ^ast.Selector_Expr:
+		if n.field != nil {
+			return common.get_token_range(n.field, src), true
+		}
+	}
+
+	return {}, false
+}
+
+collect_alias_definition_reference_locations :: proc(
+	document: ^Document,
+	search_symbol: Symbol,
+	config: ^common.Config,
+	allocator := context.allocator,
+) -> []common.Location {
+	locations := make([dynamic]common.Location, 0, allocator)
+
+	if config == nil || !config.enable_definition_skip_alias {
+		return locations[:]
+	}
+
+	ast_context := make_ast_context(
+		document.ast,
+		document.imports,
+		document.package_name,
+		document.uri.uri,
+		document.fullpath,
+		allocator,
+	)
+
+	get_globals(document.ast, &ast_context)
+	ast_context.current_package = ast_context.document_package
+
+	for _, global in ast_context.globals {
+		if global.name_expr == nil || global.expr == nil {
+			continue
+		}
+
+		alias_ident, alias_ident_ok := global.name_expr.derived.(^ast.Ident)
+		if !alias_ident_ok {
+			continue
+		}
+
+		alias_symbol, alias_symbol_ok := resolve_location_identifier(&ast_context, alias_ident^)
+		if !alias_symbol_ok || !is_skip_alias_candidate(&ast_context, alias_symbol) {
+			continue
+		}
+
+		resolved_alias, resolved_alias_ok := resolve_definition_skip_alias_target(
+			&ast_context,
+			alias_symbol,
+			document.fullpath,
+		)
+		if !resolved_alias_ok || !reference_symbols_match(resolved_alias, search_symbol) {
+			continue
+		}
+
+		name_range := common.get_token_range(global.name_expr, document.ast.src)
+		append_location_unique(
+			&locations,
+			common.Location{
+				uri   = strings.clone(document.uri.uri, allocator),
+				range = name_range,
+			},
+			allocator,
+		)
+
+		range, range_ok := alias_definition_target_reference_range(global.expr, document.ast.src)
+		if !range_ok {
+			continue
+		}
+
+		append_location_unique(
+			&locations,
+			common.Location{
+				uri   = strings.clone(document.uri.uri, allocator),
+				range = range,
+			},
+			allocator,
+		)
+	}
+
+	return locations[:]
+}
+
+reference_resolve_skip_alias_symbol :: proc(
+	ast_context: ^AstContext,
+	symbol: Symbol,
+	config: ^common.Config,
+	file: string,
+) -> (
+	Symbol,
+	bool,
+) {
+	if config == nil || !config.enable_definition_skip_alias {
+		return symbol, true
+	}
+
+	if resolved, ok := resolve_definition_skip_alias_target(ast_context, symbol, file); ok {
+		return resolved, true
+	}
+
+	if is_skip_alias_candidate(ast_context, symbol) {
+		return {}, false
+	}
+
+	return symbol, true
+}
+
 resolve_references :: proc(
 	document: ^Document,
 	ast_context: ^AstContext,
 	position_context: ^DocumentPositionContext,
+	config: ^common.Config,
 	current_file_only := false,
 	include_declaration := true,
 ) -> (
@@ -881,15 +1017,44 @@ resolve_references :: proc(
 		return {}, true
 	}
 
+	search_symbol := symbol
+	if resolved, ok := reference_resolve_skip_alias_symbol(ast_context, symbol, config, document.fullpath); ok {
+		search_symbol = resolved
+	} else {
+		return {}, false
+	}
+
+	alias_definition_locations := collect_alias_definition_reference_locations(
+		document,
+		search_symbol,
+		config,
+		ast_context.allocator,
+	)
+
 	target_name := get_target_name(position_context, resolve_flag)
+	if config != nil && config.enable_definition_skip_alias {
+		// Alias skipping can map between different symbol names (e.g. alias and target),
+		// so name filtering would hide valid alias usages.
+		target_name = ""
+	}
 	symbols_and_nodes := resolve_entire_file(document, resolve_flag, ast_context.allocator, target_name)
 
 	for k, v in symbols_and_nodes {
-		if strings.equal_fold(v.symbol.uri, symbol.uri) && v.symbol.range == symbol.range {
+		resolved_symbol, resolved_ok := reference_resolve_skip_alias_symbol(
+			ast_context,
+			v.symbol,
+			config,
+			document.fullpath,
+		)
+		if resolved_ok && reference_symbols_match(resolved_symbol, search_symbol) {
 			node_uri := common.create_uri(v.node.pos.file, ast_context.allocator)
 			range := common.get_token_range(v.node^, ast_context.file.src)
 
-			if !include_declaration && v.symbol.range == range && strings.equal_fold(node_uri.uri, symbol.uri) {
+			if reference_location_in_list(node_uri.uri, range, alias_definition_locations[:]) {
+				continue
+			}
+
+			if !include_declaration && resolved_symbol.range == range && strings.equal_fold(node_uri.uri, resolved_symbol.uri) {
 				// This is the declaration and so we skip it
 				continue
 			}
@@ -915,13 +1080,13 @@ resolve_references :: proc(
 	candidate_paths := make(map[string]struct{}, 0, context.temp_allocator)
 	reference_import_cache_ensure_initialized()
 
-	if is_builtin_pkg(symbol.pkg) {
+	if is_builtin_pkg(search_symbol.pkg) {
 		collect_reference_all_cached_files(&candidate_paths)
 	} else {
-		if !collect_reference_cached_package_files(symbol.pkg, &candidate_paths) {
-			collect_reference_package_files(symbol.pkg, &candidate_paths)
+		if !collect_reference_cached_package_files(search_symbol.pkg, &candidate_paths) {
+			collect_reference_package_files(search_symbol.pkg, &candidate_paths)
 		}
-		collect_reference_cached_importers(symbol.pkg, &candidate_paths)
+		collect_reference_cached_importers(search_symbol.pkg, &candidate_paths)
 	}
 
 	for fullpath in candidate_paths {
@@ -1015,27 +1180,44 @@ resolve_references :: proc(
 
 		parse_imports(&document, &common.config)
 
+		alias_definition_locations := collect_alias_definition_reference_locations(
+			&document,
+			search_symbol,
+			config,
+			context.allocator,
+		)
+
 		in_pkg := false
 
 		for pkg in document.imports {
-			if pkg.name == symbol.pkg {
+			if pkg.name == search_symbol.pkg {
 				in_pkg = true
 				continue
 			}
 		}
 
 		if in_pkg ||
-		   strings.equal_fold(symbol.pkg, dir) ||
-		   reference_cached_package_dir_imports_package(dir, symbol.pkg) {
+		   strings.equal_fold(search_symbol.pkg, dir) ||
+		   reference_cached_package_dir_imports_package(dir, search_symbol.pkg) {
 			symbols_and_nodes := resolve_entire_file(&document, resolve_flag, context.allocator, target_name)
 			for k, v in symbols_and_nodes {
-				if strings.equal_fold(v.symbol.uri, symbol.uri) && v.symbol.range == symbol.range {
+				resolved_symbol, resolved_ok := reference_resolve_skip_alias_symbol(
+					ast_context,
+					v.symbol,
+					config,
+					fullpath,
+				)
+				if resolved_ok && reference_symbols_match(resolved_symbol, search_symbol) {
 					node_uri := common.create_uri(v.node.pos.file, ast_context.allocator)
 					range := common.get_token_range(v.node^, string(document.text))
 
+					if reference_location_in_list(node_uri.uri, range, alias_definition_locations[:]) {
+						continue
+					}
+
 					if !include_declaration &&
-					   v.symbol.range == range &&
-					   strings.equal_fold(node_uri.uri, symbol.uri) {
+					   resolved_symbol.range == range &&
+					   strings.equal_fold(node_uri.uri, resolved_symbol.uri) {
 						// This is the declaration and so we skip it
 						continue
 					}
@@ -1062,6 +1244,7 @@ get_references :: proc(
 	position: common.Position,
 	current_file_only := false,
 	include_declaration := true,
+	config: ^common.Config,
 ) -> (
 	[]common.Location,
 	bool,
@@ -1095,6 +1278,7 @@ get_references :: proc(
 		document,
 		&ast_context,
 		&position_context,
+		config,
 		current_file_only,
 		include_declaration = include_declaration,
 	)
