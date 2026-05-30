@@ -30,7 +30,7 @@ get_rename :: proc(document: ^Document, new_text: string, position: common.Posit
 	get_globals(document.ast, &ast_context)
 	get_locals(&ast_context, &position_context)
 
-	locations, ok2 := resolve_references(document, &ast_context, &position_context)
+	locations, ok2 := resolve_references(document, &ast_context, &position_context, &common.config)
 
 	changes := make(map[string][dynamic]TextEdit, 0, context.temp_allocator)
 
