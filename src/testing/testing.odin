@@ -607,7 +607,12 @@ expect_reference_locations :: proc(
 	setup(src)
 	defer teardown(src)
 
-	locations, ok := server.get_references(src.document, cursor, include_declaration = include_declaration)
+	locations, ok := server.get_references(
+		src.document,
+		cursor,
+		include_declaration = include_declaration,
+		config = &src.config,
+	)
 
 	for expect_location in expect_locations {
 		match := false
