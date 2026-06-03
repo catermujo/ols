@@ -5,6 +5,7 @@ package server
 import "core:fmt"
 import "core:mem"
 import "core:odin/ast"
+import "core:os"
 import "core:slice"
 import "core:strings"
 
@@ -25,10 +26,17 @@ InlineReturnSlot :: struct {
 	type_text: string,
 }
 
+InlineActionDocument :: struct {
+	document:      ^Document,
+	temp_document: ^Document,
+}
+
 @(private = "package")
 add_inline_action :: proc(
+	document: ^Document,
 	ast_context: ^AstContext,
 	position_context: ^DocumentPositionContext,
+	config: ^common.Config,
 	uri: string,
 	actions: ^[dynamic]CodeAction,
 ) {
@@ -52,10 +60,12 @@ add_inline_action :: proc(
 	}
 
 	if action, ok := build_inline_function_action(
+		document,
 		ast_context,
 		position_context,
 		resolved_symbol,
 		declaration_symbol,
+		config,
 		uri,
 	); ok {
 		append(actions, action)
@@ -63,21 +73,175 @@ add_inline_action :: proc(
 	}
 
 	if action, ok := build_inline_value_action(
+		document,
 		ast_context,
 		position_context,
 		resolved_symbol,
 		declaration_symbol,
+		config,
 		uri,
 	); ok {
 		append(actions, action)
 	}
 }
 
+position_in_range :: proc(position: common.Position, range: common.Range) -> bool {
+	if position.line < range.start.line || position.line > range.end.line {
+		return false
+	}
+
+	if position.line == range.start.line && position.character < range.start.character {
+		return false
+	}
+
+	if position.line == range.end.line && position.character > range.end.character {
+		return false
+	}
+
+	return true
+}
+
+range_inside_range :: proc(inner, outer: common.Range) -> bool {
+	return position_in_range(inner.start, outer) && position_in_range(inner.end, outer)
+}
+
+append_workspace_edit :: proc(changes: ^map[string][dynamic]TextEdit, uri: string, edit: TextEdit) {
+	edits := &changes[uri]
+	if edits == nil {
+		changes[strings.clone(uri, context.temp_allocator)] = make([dynamic]TextEdit, 0, context.temp_allocator)
+		edits = &changes[uri]
+	}
+
+	append(edits, edit)
+}
+
+make_workspace_edit_from_dynamic_map :: proc(changes: map[string][dynamic]TextEdit) -> WorkspaceEdit {
+	workspace_edit := WorkspaceEdit{}
+	workspace_edit.changes = make(map[string][]TextEdit, len(changes), context.temp_allocator)
+
+	for uri, edits in changes {
+		workspace_edit.changes[uri] = edits[:]
+	}
+
+	return workspace_edit
+}
+
+load_inline_action_document :: proc(uri_string: string, config: ^common.Config) -> (InlineActionDocument, bool) {
+	if document := document_get(uri_string); document != nil {
+		return InlineActionDocument{document = document}, true
+	}
+
+	uri, parsed_ok := common.parse_uri(uri_string, context.temp_allocator)
+	if !parsed_ok {
+		return {}, false
+	}
+
+	data, err := os.read_entire_file(uri.path, context.temp_allocator)
+	if err != nil {
+		return {}, false
+	}
+
+	temp_document := new(Document, context.temp_allocator)
+	temp_document.uri = uri
+	temp_document.text = data
+	temp_document.used_text = len(data)
+	temp_document.allocator = document_get_allocator()
+
+	document_setup(temp_document)
+
+	old_allocator := context.allocator
+	defer context.allocator = old_allocator
+
+	_, ok := parse_document(temp_document, config)
+	if !ok {
+		document_free_allocator(temp_document.allocator)
+		temp_document.allocator = nil
+		return {}, false
+	}
+
+	return InlineActionDocument{
+		document = temp_document,
+		temp_document = temp_document,
+	}, true
+}
+
+release_inline_action_document :: proc(loaded: ^InlineActionDocument) {
+	if loaded.document == nil {
+		return
+	}
+
+	if loaded.temp_document != nil {
+		document_free_allocator(loaded.temp_document.allocator)
+		loaded.temp_document.allocator = nil
+	} else {
+		document_release(loaded.document)
+	}
+}
+
+get_inline_reference_locations :: proc(
+	document: ^Document,
+	ast_context: ^AstContext,
+	position_context: ^DocumentPositionContext,
+	declaration_symbol: Symbol,
+	config: ^common.Config,
+) -> ([]common.Location, bool) {
+	locations, ok := resolve_references(
+		document,
+		ast_context,
+		position_context,
+		config,
+		false,
+		false,
+	)
+	if !ok {
+		return {}, false
+	}
+
+	if position_context.value_decl == nil {
+		return locations, true
+	}
+
+	declaration_range := common.get_token_range(position_context.value_decl^, ast_context.file.src)
+	filtered := make([dynamic]common.Location, 0, context.temp_allocator)
+
+	for location in locations {
+		if strings.equal_fold(location.uri, declaration_symbol.uri) &&
+		   range_inside_range(location.range, declaration_range) {
+			continue
+		}
+
+		append(&filtered, location)
+	}
+
+	return filtered[:], true
+}
+
+get_inline_value_text :: proc(ast_context: ^AstContext, resolved_symbol: Symbol) -> (string, bool) {
+	value_text := ast_context.file.src[resolved_symbol.value_expr.pos.offset:resolved_symbol.value_expr.end.offset]
+	if comp_lit, is_comp_lit := resolved_symbol.value_expr.derived.(^ast.Comp_Lit); is_comp_lit &&
+		comp_lit.type == nil && resolved_symbol.type_expr != nil {
+		type_text := strings.trim_space(
+			ast_context.file.src[resolved_symbol.type_expr.pos.offset:resolved_symbol.type_expr.end.offset],
+		)
+		if type_text != "" {
+			value_text = strings.concatenate({type_text, value_text}, context.temp_allocator)
+		}
+	}
+
+	if strings.trim_space(value_text) == "" {
+		return "", false
+	}
+
+	return value_text, true
+}
+
 build_inline_value_action :: proc(
+	document: ^Document,
 	ast_context: ^AstContext,
 	position_context: ^DocumentPositionContext,
 	resolved_symbol: Symbol,
 	declaration_symbol: Symbol,
+	config: ^common.Config,
 	uri: string,
 ) -> (CodeAction, bool) {
 	if resolved_symbol.value_expr == nil {
@@ -91,33 +255,51 @@ build_inline_value_action :: proc(
 	value_decl_range := declaration_symbol.range
 	ident_range := common.get_token_range(position_context.identifier^, ast_context.file.src)
 
-	// Avoid rewriting the declaration name itself.
-	if strings.equal_fold(declaration_symbol.uri, uri) && value_decl_range == ident_range {
-		return {}, false
-	}
-
 	if resolved_symbol.type != .Variable && resolved_symbol.type != .Constant {
 		return {}, false
 	}
 
-	value_text := ast_context.file.src[resolved_symbol.value_expr.pos.offset:resolved_symbol.value_expr.end.offset]
-	if comp_lit, is_comp_lit := resolved_symbol.value_expr.derived.(^ast.Comp_Lit); is_comp_lit &&
-		comp_lit.type == nil && resolved_symbol.type_expr != nil {
-		type_text := strings.trim_space(
-			ast_context.file.src[resolved_symbol.type_expr.pos.offset:resolved_symbol.type_expr.end.offset],
-		)
-		if type_text != "" {
-			value_text = strings.concatenate({type_text, value_text}, context.temp_allocator)
-		}
-	}
-
-	if strings.trim_space(value_text) == "" {
+	value_text, value_ok := get_inline_value_text(ast_context, resolved_symbol)
+	if !value_ok {
 		return {}, false
 	}
 
 	title := INLINE_VARIABLE_ACTION
 	if resolved_symbol.type == .Constant {
 		title = INLINE_CONSTANT_ACTION
+	}
+
+	if strings.equal_fold(declaration_symbol.uri, uri) && value_decl_range == ident_range {
+		locations, ok := get_inline_reference_locations(
+			document,
+			ast_context,
+			position_context,
+			declaration_symbol,
+			config,
+		)
+		if !ok || len(locations) == 0 {
+			return {}, false
+		}
+
+		changes := make(map[string][dynamic]TextEdit, 0, context.temp_allocator)
+		for location in locations {
+			append_workspace_edit(
+				&changes,
+				location.uri,
+				TextEdit{
+					range = location.range,
+					newText = value_text,
+				},
+			)
+		}
+
+		return CodeAction{
+				title = title,
+				kind = "refactor.inline",
+				edit = make_workspace_edit_from_dynamic_map(changes),
+				isPreferred = false,
+			},
+			true
 	}
 
 	edit := TextEdit{
@@ -142,13 +324,15 @@ build_inline_value_action :: proc(
 }
 
 build_inline_function_action :: proc(
+	document: ^Document,
 	ast_context: ^AstContext,
 	position_context: ^DocumentPositionContext,
 	resolved_symbol: Symbol,
 	declaration_symbol: Symbol,
+	config: ^common.Config,
 	uri: string,
 ) -> (CodeAction, bool) {
-	if resolved_symbol.value_expr == nil || position_context.call == nil {
+	if resolved_symbol.value_expr == nil {
 		return {}, false
 	}
 
@@ -157,38 +341,122 @@ build_inline_function_action :: proc(
 		return {}, false
 	}
 
-	call_expr, call_ok := position_context.call.derived.(^ast.Call_Expr)
-	if !call_ok {
+	if position_context.call != nil {
+		call_expr, call_ok := position_context.call.derived.(^ast.Call_Expr)
+		if !call_ok {
+			return {}, false
+		}
+
+		call_range := common.get_token_range(position_context.call^, ast_context.file.src)
+		inline_text, inline_ok := build_inline_call_text(ast_context.file.src, declaration_symbol.name, proc_lit, call_expr)
+		if !inline_ok || inline_text == "" {
+			return {}, false
+		}
+
+		edit := TextEdit{
+			range = call_range,
+			newText = inline_text,
+		}
+
+		text_edits := make([dynamic]TextEdit, 0, context.temp_allocator)
+		append(&text_edits, edit)
+
+		workspace_edit := WorkspaceEdit{}
+		workspace_edit.changes = make(map[string][]TextEdit, 0, context.temp_allocator)
+		workspace_edit.changes[uri] = text_edits[:]
+
+		return CodeAction{
+				title = INLINE_FUNCTION_ACTION,
+				kind = "refactor.inline",
+				edit = workspace_edit,
+				isPreferred = false,
+			},
+			true
+	}
+
+	ident_range := common.get_token_range(position_context.identifier^, ast_context.file.src)
+	if !strings.equal_fold(declaration_symbol.uri, uri) || declaration_symbol.range != ident_range {
 		return {}, false
 	}
 
-	call_ident, call_ident_ok := call_expr.expr.derived.(^ast.Ident)
-	if !call_ident_ok || call_ident.name != declaration_symbol.name {
+	locations, ok := get_inline_reference_locations(
+		document,
+		ast_context,
+		position_context,
+		declaration_symbol,
+		config,
+	)
+	if !ok || len(locations) == 0 {
 		return {}, false
 	}
 
-	call_range := common.get_token_range(position_context.call^, ast_context.file.src)
-	inline_text, inline_ok := build_inline_call_text(ast_context.file.src, declaration_symbol.name, proc_lit, call_expr)
-	if !inline_ok || inline_text == "" {
-		return {}, false
+	changes := make(map[string][dynamic]TextEdit, 0, context.temp_allocator)
+
+	for location in locations {
+		reference_document := document
+		loaded_document: InlineActionDocument
+
+		if !strings.equal_fold(location.uri, document.uri.uri) {
+			load_ok: bool
+			loaded_document, load_ok = load_inline_action_document(location.uri, config)
+			if !load_ok {
+				return {}, false
+			}
+			reference_document = loaded_document.document
+		}
+
+		position_context, context_ok := get_document_position_context(
+			reference_document,
+			location.range.start,
+			.Hover,
+		)
+		if !context_ok || position_context.call == nil {
+			if loaded_document.document != nil {
+				release_inline_action_document(&loaded_document)
+			}
+			return {}, false
+		}
+
+		call_expr, call_ok := position_context.call.derived.(^ast.Call_Expr)
+		if !call_ok {
+			if loaded_document.document != nil {
+				release_inline_action_document(&loaded_document)
+			}
+			return {}, false
+		}
+
+		call_range := common.get_token_range(position_context.call^, reference_document.ast.src)
+		inline_text, inline_ok := build_inline_call_text(
+			reference_document.ast.src,
+			declaration_symbol.name,
+			proc_lit,
+			call_expr,
+		)
+		if !inline_ok || inline_text == "" {
+			if loaded_document.document != nil {
+				release_inline_action_document(&loaded_document)
+			}
+			return {}, false
+		}
+
+		append_workspace_edit(
+			&changes,
+			location.uri,
+			TextEdit{
+				range = call_range,
+				newText = inline_text,
+			},
+		)
+
+		if loaded_document.document != nil {
+			release_inline_action_document(&loaded_document)
+		}
 	}
-
-	edit := TextEdit{
-		range = call_range,
-		newText = inline_text,
-	}
-
-	text_edits := make([dynamic]TextEdit, 0, context.temp_allocator)
-	append(&text_edits, edit)
-
-	workspace_edit := WorkspaceEdit{}
-	workspace_edit.changes = make(map[string][]TextEdit, 0, context.temp_allocator)
-	workspace_edit.changes[uri] = text_edits[:]
 
 	return CodeAction{
 			title = INLINE_FUNCTION_ACTION,
 			kind = "refactor.inline",
-			edit = workspace_edit,
+			edit = make_workspace_edit_from_dynamic_map(changes),
 			isPreferred = false,
 		},
 		true

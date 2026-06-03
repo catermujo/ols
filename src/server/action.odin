@@ -120,8 +120,10 @@ get_code_actions :: proc(
 	}
 
 	add_inline_action(
+		document,
 		&ast_context,
 		&position_context,
+		config,
 		strings.clone(document.uri.uri, context.temp_allocator),
 		&actions,
 	)
