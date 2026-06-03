@@ -27,6 +27,26 @@ main :: proc() {
 }
 
 @(test)
+action_inline_variable_definition_rewrites_usages :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+
+main :: proc() {
+	value{*} := 10
+	one := value + 1
+	two := value + 2
+	_ = one
+	_ = two
+}
+`,
+		packages = {},
+	}
+
+	test.expect_action(t, &source, {INLINE_VARIABLE_ACTION})
+	test.expect_action_with_edits(t, &source, INLINE_VARIABLE_ACTION, {"10", "10"})
+}
+
+@(test)
 action_inline_constant_value :: proc(t: ^testing.T) {
 	source := test.Source {
 		main = `package test
@@ -43,6 +63,27 @@ main :: proc() {
 
 	test.expect_action(t, &source, {INLINE_CONSTANT_ACTION})
 	test.expect_action_with_edit(t, &source, INLINE_CONSTANT_ACTION, "4")
+}
+
+@(test)
+action_inline_constant_definition_rewrites_usages :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+
+factor{*} :: 4
+
+main :: proc() {
+	one := factor + 1
+	two := factor + 2
+	_ = one
+	_ = two
+}
+`,
+		packages = {},
+	}
+
+	test.expect_action(t, &source, {INLINE_CONSTANT_ACTION})
+	test.expect_action_with_edits(t, &source, INLINE_CONSTANT_ACTION, {"4", "4"})
 }
 
 @(test)
@@ -109,6 +150,60 @@ main :: proc() {
 
 	test.expect_action(t, &source, {INLINE_FUNCTION_ACTION})
 	test.expect_action_with_edit(t, &source, INLINE_FUNCTION_ACTION, expected)
+}
+
+@(test)
+action_inline_function_definition_rewrites_calls :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+
+add_one{*} :: proc(v: int) -> int {
+	if v < 0 {
+		return 0
+	}
+	return v + 1
+}
+
+main :: proc() {
+	a := add_one(4)
+	b := add_one(9)
+	_ = a
+	_ = b
+}
+`,
+		packages = {},
+	}
+
+	expected := `(proc() -> (int) {
+	v := 4
+	__ols_inline_ret_0: int
+	add_one: {
+	if v < 0 {
+		__ols_inline_ret_0 = 0
+		break add_one
+	}
+	__ols_inline_ret_0 = v + 1
+	break add_one
+}
+	return __ols_inline_ret_0
+})()`
+
+	expected_two := `(proc() -> (int) {
+	v := 9
+	__ols_inline_ret_0: int
+	add_one: {
+	if v < 0 {
+		__ols_inline_ret_0 = 0
+		break add_one
+	}
+	__ols_inline_ret_0 = v + 1
+	break add_one
+}
+	return __ols_inline_ret_0
+})()`
+
+	test.expect_action(t, &source, {INLINE_FUNCTION_ACTION})
+	test.expect_action_with_edits(t, &source, INLINE_FUNCTION_ACTION, {expected, expected_two})
 }
 
 @(test)

@@ -789,6 +789,76 @@ expect_action_with_edit :: proc(t: ^testing.T, src: ^Source, action_name: string
 	log.errorf("Action '%s' not found in actions: %v", action_name, actions)
 }
 
+expect_action_with_edits :: proc(t: ^testing.T, src: ^Source, action_name: string, expected_new_texts: []string) {
+	setup(src)
+	defer teardown(src)
+
+	input_range := common.Range {
+		start = src.position,
+		end   = src.position,
+	}
+	actions, ok := server.get_code_actions(src.document, input_range, &src.config)
+	if !ok {
+		log.error("Failed to find actions")
+		return
+	}
+
+	for action in actions {
+		if action.title != action_name {
+			continue
+		}
+
+		actual_texts := make([dynamic]string, 0, context.temp_allocator)
+		for _, edits in action.edit.changes {
+			for edit in edits {
+				append(&actual_texts, edit.newText)
+			}
+		}
+
+		if len(actual_texts) != len(expected_new_texts) {
+			log.errorf(
+				"Action '%s' expected %d edits but received %d",
+				action_name,
+				len(expected_new_texts),
+				len(actual_texts),
+			)
+			return
+		}
+
+		flags := make([]int, len(expected_new_texts), context.temp_allocator)
+		used := make([]bool, len(actual_texts), context.temp_allocator)
+		for expected_text, i in expected_new_texts {
+			for actual_text, j in actual_texts {
+				if used[j] {
+					continue
+				}
+
+				if actual_text == expected_text {
+					flags[i] += 1
+					used[j] = true
+					break
+				}
+			}
+		}
+
+		for flag, i in flags {
+			if flag != 1 {
+				log.errorf(
+					"Action '%s' expected edit text:\n%s\n\nGot:\n%v",
+					action_name,
+					expected_new_texts[i],
+					actual_texts[:],
+				)
+				return
+			}
+		}
+
+		return
+	}
+
+	log.errorf("Action '%s' not found in actions: %v", action_name, actions)
+}
+
 expect_semantic_tokens :: proc(t: ^testing.T, src: ^Source, expected: []server.SemanticToken) {
 	setup(src)
 	defer teardown(src)

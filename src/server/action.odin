@@ -97,8 +97,10 @@ get_code_actions :: proc(document: ^Document, range: common.Range, config: ^comm
 	}
 
 	add_inline_action(
+		document,
 		&ast_context,
 		&position_context,
+		config,
 		strings.clone(document.uri.uri, context.temp_allocator),
 		&actions,
 	)
