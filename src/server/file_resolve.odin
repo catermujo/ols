@@ -305,7 +305,15 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 	case ^ast.Field_Value:
 		data.position_context.field_value = n
 
-		if data.flag != .None && data.position_context.comp_lit != nil {
+		if data.flag != .None && field_value_is_named_call_arg(data.position_context) {
+			if symbol, ok := resolve_location_proc_param_name(data.ast_context, data.position_context); ok {
+				data.symbols[cast(uintptr)node] = SymbolAndNode {
+					node   = n.field,
+					symbol = symbol,
+				}
+			}
+			resolve_node(n.value, data)
+		} else if data.flag != .None && data.position_context.comp_lit != nil {
 			data.position_context.position = n.pos.offset
 
 			if symbol, ok := resolve_location_comp_lit_field(data.ast_context, data.position_context); ok {
@@ -438,12 +446,14 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 		resolve_node(n.expr, data)
 	case ^ast.Call_Expr:
 		old_call := data.ast_context.call
+		old_call_arg := data.position_context.call_arg
 
 		data.position_context.call = n
 		data.ast_context.call = n
 
 		defer {
 			data.position_context.call = old_call
+			data.position_context.call_arg = old_call_arg
 		}
 
 		resolve_node(n.expr, data)
@@ -452,6 +462,7 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 
 		for arg in n.args {
 			data.position_context.position = arg.pos.offset
+			data.position_context.call_arg = arg
 			resolve_node(arg, data)
 		}
 	case ^ast.Index_Expr:
