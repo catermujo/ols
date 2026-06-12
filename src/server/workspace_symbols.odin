@@ -3,7 +3,6 @@ package server
 import "core:slice"
 import "core:fmt"
 import "core:log"
-import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "core:time"
@@ -19,6 +18,70 @@ WorkspaceCache :: struct {
 
 @(thread_local, private = "file")
 cache: WorkspaceCache
+
+Workspace_Symbol_Scan_State :: struct {
+	pkgs:           [dynamic]string,
+	scanned_dirs:   int,
+	candidate_dirs: int,
+	odin_dirs:      int,
+	excluded_dirs:  int,
+}
+
+workspace_path_is_excluded :: proc(pkg: string) -> bool {
+	for exclude_path in common.config.profile.exclude_path {
+		exclude_forward, _ := filepath.replace_separators(exclude_path, '/', context.temp_allocator)
+
+		if exclude_forward[len(exclude_forward) - 2:] == "**" {
+			lower_pkg := strings.to_lower(pkg)
+			lower_exclude := strings.to_lower(exclude_forward[:len(exclude_forward) - 3])
+			if strings.contains(lower_pkg, lower_exclude) {
+				return true
+			}
+		} else {
+			lower_pkg := strings.to_lower(pkg)
+			lower_exclude := strings.to_lower(exclude_forward)
+			if lower_pkg == lower_exclude {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+workspace_symbols_should_skip_dir :: proc(fullpath: string, state: rawptr) -> bool {
+	data := cast(^Workspace_Symbol_Scan_State)state
+	data.scanned_dirs += 1
+
+	dir, _ := filepath.replace_separators(fullpath, '/', context.temp_allocator)
+	dir_name := filepath.base(dir)
+	for blacklist in dir_blacklist {
+		if blacklist == dir_name {
+			return true
+		}
+	}
+
+	if workspace_path_is_excluded(dir) {
+		data.excluded_dirs += 1
+		return true
+	}
+
+	data.candidate_dirs += 1
+	return false
+}
+
+workspace_symbols_collect_file :: proc(fullpath: string, state: rawptr) {
+	if filepath.ext(fullpath) != ".odin" {
+		return
+	}
+
+	data := cast(^Workspace_Symbol_Scan_State)state
+	dir := filepath.dir(fullpath)
+	if !slice.contains(data.pkgs[:], dir) {
+		append(&data.pkgs, strings.clone(dir, context.temp_allocator))
+		data.odin_dirs += 1
+	}
+}
 
 get_workspace_symbols :: proc(query: string) -> (workspace_symbols: []WorkspaceSymbol, ok: bool) {
 	cache_rebuilt := false
@@ -38,57 +101,26 @@ get_workspace_symbols :: proc(query: string) -> (workspace_symbols: []WorkspaceS
 		clear(&cache.pkgs)
 		for workspace in common.config.workspace_folders {
 			uri := common.parse_uri(workspace.uri, context.temp_allocator) or_return
-			pkgs := make([dynamic]string, 0, context.temp_allocator)
-			append(&pkgs, uri.path)
-
-			w := os.walker_create(uri.path)
-			defer os.walker_destroy(&w)
-			for info in os.walker_walk(&w) {
-				if info.type == .Directory {
-					scanned_dirs += 1
-					dir, _ := filepath.replace_separators(info.fullpath, '/', context.temp_allocator)
-					dir_name := filepath.base(dir)
-					if slice.contains(dir_blacklist, dir_name) {
-						os.walker_skip_dir(&w)
-					} else {
-						append(&pkgs, dir)
-						candidate_dirs += 1
-					}
-				}
+			data := Workspace_Symbol_Scan_State {
+				pkgs = make([dynamic]string, 0, context.temp_allocator),
 			}
+			walk_tree_follow_symlink_dirs(
+				uri.path,
+				&data,
+				workspace_symbols_should_skip_dir,
+				workspace_symbols_collect_file,
+			)
 
-			_pkg: for pkg in pkgs {
-				matches, err := filepath.glob(fmt.tprintf("%v/*.odin", pkg), context.temp_allocator)
-
-				if len(matches) == 0 {
-					continue
-				}
-				odin_dirs += 1
-
-				for exclude_path in common.config.profile.exclude_path {
-					exclude_forward, _ := filepath.replace_separators(exclude_path, '/', context.temp_allocator)
-
-					if exclude_forward[len(exclude_forward) - 2:] == "**" {
-						lower_pkg := strings.to_lower(pkg)
-						lower_exclude := strings.to_lower(exclude_forward[:len(exclude_forward) - 3])
-						if strings.contains(lower_pkg, lower_exclude) {
-							excluded_dirs += 1
-							continue _pkg
-						}
-					} else {
-						lower_pkg := strings.to_lower(pkg)
-						lower_exclude := strings.to_lower(exclude_forward)
-						if lower_pkg == lower_exclude {
-							excluded_dirs += 1
-							continue _pkg
-						}
-					}
-				}
-
+			for pkg in data.pkgs {
 				try_build_package(pkg)
 				built_packages += 1
 				append(&cache.pkgs, strings.clone(pkg, context.allocator))
 			}
+
+			scanned_dirs += data.scanned_dirs
+			candidate_dirs += data.candidate_dirs
+			odin_dirs += data.odin_dirs
+			excluded_dirs += data.excluded_dirs
 		}
 		cache.time = time.now()
 

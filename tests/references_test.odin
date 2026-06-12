@@ -1,7 +1,11 @@
 package tests
 
 import "core:log"
+import "core:mem/virtual"
+import "core:os"
+import path "core:path/slashpath"
 import "core:slice"
+import "core:strings"
 import "core:testing"
 
 import "src:common"
@@ -13,6 +17,118 @@ reset_reference_config :: proc() {
 	clear(&common.config.collections)
 	clear(&common.config.profile.exclude_path)
 	server.reference_import_cache_reset()
+}
+
+reference_extract_cursor :: proc(src: string) -> (string, common.Position, bool) {
+	index := strings.index(src, "{*}")
+	if index == -1 {
+		return src, {}, false
+	}
+
+	position: common.Position
+	for i := 0; i < index; i += 1 {
+		switch src[i] {
+		case '\n':
+			position.line += 1
+			position.character = 0
+		case '\r':
+		case:
+			position.character += 1
+		}
+	}
+
+	cleaned, _ := strings.remove(src, "{*}", 1, context.temp_allocator)
+	return cleaned, position, true
+}
+
+@(test)
+reference_same_directory_different_declared_packages_do_not_spill :: proc(t: ^testing.T) {
+	defer reset_reference_config()
+
+	server.setup_index(server.get_builtin_path())
+	defer server.free_index()
+
+	root, err := os.make_directory_temp("", "ols-ref-same-dir-*", context.allocator)
+	if err != nil {
+		log.error(t, "failed to create temp dir", err)
+		return
+	}
+	defer os.remove_all(root)
+
+	main_source, position, ok := reference_extract_cursor(`package find_playable_track
+
+_load_runtime :: proc() {}
+
+main :: proc() {
+	_load_{*}runtime()
+}
+`)
+	if !ok {
+		log.error(t, "failed to extract cursor")
+		return
+	}
+
+	other_source := `package probe_example
+
+_load_runtime :: proc() {}
+
+main :: proc() {
+	_load_runtime()
+}
+`
+
+	main_file := path.join({root, "find_playable_track.odin"}, context.temp_allocator)
+	if err := os.write_entire_file(main_file, main_source); err != nil {
+		log.error(t, "failed to write main file", err)
+		return
+	}
+
+	other_file := path.join({root, "probe.odin"}, context.temp_allocator)
+	if err := os.write_entire_file(other_file, other_source); err != nil {
+		log.error(t, "failed to write sibling file", err)
+		return
+	}
+
+	allocator := new(virtual.Arena, context.temp_allocator)
+	_ = virtual.arena_init_growing(allocator)
+	defer virtual.arena_destroy(allocator)
+
+	document := server.Document{
+		uri       = common.create_uri(main_file, context.temp_allocator),
+		text      = transmute([]u8)main_source,
+		used_text = len(main_source),
+		allocator = allocator,
+	}
+
+	server.document_setup(&document)
+	if refresh_err := server.document_refresh(&document, &common.config, nil); refresh_err != .None {
+		log.errorf("document_refresh failed: %v", refresh_err)
+		return
+	}
+
+	locations, refs_ok := server.get_references(&document, position, include_declaration = true, config = &common.config)
+	if !refs_ok {
+		log.error(t, "get_references failed")
+		return
+	}
+
+	main_uri := common.create_uri(main_file, context.temp_allocator).uri
+	other_uri := common.create_uri(other_file, context.temp_allocator).uri
+
+	if len(locations) != 2 {
+		log.errorf("expected 2 references in main file, got %v", locations)
+	}
+
+	for location in locations {
+		if location.uri != main_uri {
+			log.errorf("expected only main file references, got %v", locations)
+			break
+		}
+		if location.uri == other_uri {
+			log.errorf("unexpected spillover into sibling file: %v", locations)
+			break
+		}
+	}
 }
 
 @(test)
