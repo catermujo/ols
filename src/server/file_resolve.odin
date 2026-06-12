@@ -20,10 +20,13 @@ reset_position_context :: proc(position_context: ^DocumentPositionContext) {
 	position_context.parent_comp_lit = nil
 	position_context.identifier = nil
 	position_context.call = nil
+	position_context.unary = nil
 	position_context.binary = nil
 	position_context.parent_binary = nil
 	position_context.previous_index = nil
 	position_context.index = nil
+	position_context.expr_stmt = nil
+	position_context.if_stmt = nil
 }
 
 resolve_ranged_file :: proc(

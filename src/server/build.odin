@@ -118,27 +118,42 @@ skip_file :: proc(filename: string) -> bool {
 	return false
 }
 
+Append_Packages_State :: struct {
+	pkgs:      ^[dynamic]string,
+	skip:      map[string]struct{},
+	allocator: runtime.Allocator,
+}
+
+append_packages_should_skip_dir :: proc(path: string, state: rawptr) -> bool {
+	data := cast(^Append_Packages_State)state
+	return path in data.skip
+}
+
+append_packages_collect_file :: proc(fullpath: string, state: rawptr) {
+	if filepath.ext(fullpath) != ".odin" {
+		return
+	}
+
+	if file_has_ignore_file_tag(fullpath) {
+		return
+	}
+
+	data := cast(^Append_Packages_State)state
+	dir := filepath.dir(fullpath)
+	if !slice.contains(data.pkgs[:], dir) {
+		append(data.pkgs, strings.clone(dir, data.allocator))
+	}
+}
+
 // Finds all packages under the provided path by walking the file system
 // and appends them to the provided dynamic array
 append_packages :: proc(path: string, pkgs: ^[dynamic]string, skip: map[string]struct{}, allocator := context.temp_allocator) {
-	w := os.walker_create(path)
-	defer os.walker_destroy(&w)
-	for info in os.walker_walk(&w) {
-		if info.type != .Directory && filepath.ext(info.name) == ".odin" {
-			if file_has_ignore_file_tag(info.fullpath) {
-				continue
-			}
-
-			dir := filepath.dir(info.fullpath)
-			if dir in skip {
-				os.walker_skip_dir(&w)
-				continue
-			}
-			if !slice.contains(pkgs[:], dir) {
-				append(pkgs, strings.clone(dir, allocator))
-			}
-		}
+	data := Append_Packages_State {
+		pkgs      = pkgs,
+		skip      = skip,
+		allocator = allocator,
 	}
+	walk_tree_follow_symlink_dirs(path, &data, append_packages_should_skip_dir, append_packages_collect_file)
 }
 
 should_collect_file :: proc(file_tags: parser.File_Tags) -> bool {

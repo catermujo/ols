@@ -48,9 +48,12 @@ DocumentPositionContext :: struct {
 	bit_field_type:         ^ast.Bit_Field_Type,
 	implicit:               bool, //used for completion
 	arrow:                  bool,
+	unary:                  ^ast.Unary_Expr,
 	binary:                 ^ast.Binary_Expr, //used for completion
 	parent_binary:          ^ast.Binary_Expr, //used for completion
 	assign:                 ^ast.Assign_Stmt, //used for completion
+	expr_stmt:              ^ast.Expr_Stmt, //used for refactors
+	if_stmt:                ^ast.If_Stmt, //used for refactors
 	switch_stmt:            ^ast.Switch_Stmt, //used for completion
 	switch_type_stmt:       ^ast.Type_Switch_Stmt, //used for completion
 	case_clause:            ^ast.Case_Clause, //used for completion
@@ -164,6 +167,14 @@ get_document_position_context :: proc(
 
 	if !position_in_node(position_context.assign, position_context.position) {
 		position_context.assign = nil
+	}
+
+	if !position_in_node(position_context.expr_stmt, position_context.position) {
+		position_context.expr_stmt = nil
+	}
+
+	if !position_in_node(position_context.if_stmt, position_context.position) {
+		position_context.if_stmt = nil
 	}
 
 	if !position_in_node(position_context.binary, position_context.position) {
@@ -644,6 +655,7 @@ get_document_position_node :: proc(node: ^ast.Node, position_context: ^DocumentP
 	case ^ast.Tag_Expr:
 		get_document_position(n.expr, position_context)
 	case ^ast.Unary_Expr:
+		position_context.unary = n
 		get_document_position(n.expr, position_context)
 	case ^ast.Binary_Expr:
 		if position_context.parent_binary == nil {
@@ -730,6 +742,7 @@ get_document_position_node :: proc(node: ^ast.Node, position_context: ^DocumentP
 	case ^ast.Bad_Stmt:
 	case ^ast.Empty_Stmt:
 	case ^ast.Expr_Stmt:
+		position_context.expr_stmt = cast(^ast.Expr_Stmt)node
 		get_document_position(n.expr, position_context)
 	case ^ast.Tag_Stmt:
 		r := n
@@ -742,6 +755,7 @@ get_document_position_node :: proc(node: ^ast.Node, position_context: ^DocumentP
 		get_document_position_label(n.label, position_context)
 		get_document_position(n.stmts, position_context)
 	case ^ast.If_Stmt:
+		position_context.if_stmt = cast(^ast.If_Stmt)node
 		get_document_position_label(n.label, position_context)
 		get_document_position(n.init, position_context)
 		get_document_position(n.cond, position_context)
