@@ -9,7 +9,12 @@ import "core:strings"
 
 import "src:common"
 
-get_rename :: proc(document: ^Document, new_text: string, position: common.Position) -> (WorkspaceEdit, bool) {
+get_rename :: proc(
+	document: ^Document,
+	new_text: string,
+	position: common.Position,
+	config: ^common.Config,
+) -> (WorkspaceEdit, bool) {
 	ast_context := make_ast_context(
 		document.ast,
 		document.imports,
@@ -30,7 +35,7 @@ get_rename :: proc(document: ^Document, new_text: string, position: common.Posit
 	get_globals(document.ast, &ast_context)
 	get_locals(&ast_context, &position_context)
 
-	locations, ok2 := resolve_references(document, &ast_context, &position_context, &common.config)
+	locations, ok2 := resolve_references(document, &ast_context, &position_context, config)
 
 	changes := make(map[string][dynamic]TextEdit, 0, context.temp_allocator)
 

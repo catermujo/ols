@@ -3604,6 +3604,10 @@ resolve_alias_symbol_target :: proc(
 	Symbol,
 	bool,
 ) {
+	if .Distinct in symbol.flags {
+		return symbol, false
+	}
+
 	if .Local in symbol.flags && symbol.type != .Field {
 		return symbol, false
 	}
@@ -3803,11 +3807,13 @@ resolve_location_symbol_selector :: proc(
 					pkg = resolved_alias
 				}
 			}
-			if resolved_basic, ok := resolve_basic_symbol_target(ast_context, pkg, selector.pos.file); ok {
-				if symbol_has_precise_range(pkg) && !symbol_has_precise_range(resolved_basic) {
-					// Keep the original package field location when basic resolution loses range/uri.
-				} else {
-					pkg = resolved_basic
+			if .Distinct not_in pkg.flags {
+				if resolved_basic, ok := resolve_basic_symbol_target(ast_context, pkg, selector.pos.file); ok {
+					if symbol_has_precise_range(pkg) && !symbol_has_precise_range(resolved_basic) {
+						// Keep the original package field location when basic resolution loses range/uri.
+					} else {
+						pkg = resolved_basic
+					}
 				}
 			}
 			symbol.range = pkg.range

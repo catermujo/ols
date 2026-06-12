@@ -675,7 +675,7 @@ expect_rename_locations :: proc(
 	setup(src)
 	defer teardown(src)
 
-	edit, ok := server.get_rename(src.document, new_name, cursor)
+	edit, ok := server.get_rename(src.document, new_name, cursor, &src.config)
 	if !ok {
 		log.error("Failed to get rename edits")
 		return

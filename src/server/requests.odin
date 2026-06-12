@@ -1719,7 +1719,7 @@ request_rename :: proc(params: json.Value, id: RequestId, config: ^common.Config
 	}
 
 	workspace_edit: WorkspaceEdit
-	workspace_edit, ok = get_rename(document, rename_param.newName, rename_param.position)
+	workspace_edit, ok = get_rename(document, rename_param.newName, rename_param.position, config)
 
 	if !ok {
 		return .InternalError
