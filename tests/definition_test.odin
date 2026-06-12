@@ -1309,6 +1309,29 @@ main :: proc() {
 }
 
 @(test)
+ast_goto_identifier_definition_skip_distinct_global :: proc(t: ^testing.T) {
+	source := test.Source{
+		main = `package test
+Base :: struct{}
+Foo :: distinct Base
+
+main :: proc() {
+	_: Fo{*}o
+}
+`,
+		config = {enable_definition_skip_alias = true},
+	}
+
+	locations := []common.Location{
+		{
+			range = {start = {line = 2, character = 0}, end = {line = 2, character = 3}},
+		},
+	}
+
+	test.expect_definition_locations(t, &source, locations[:])
+}
+
+@(test)
 ast_goto_selector_field_nested_using_skip_alias :: proc(t: ^testing.T) {
 	source := test.Source{
 		main = `package test
@@ -1331,6 +1354,40 @@ use :: proc(s: ^Sim) {
 	locations := []common.Location{
 		{
 			range = {start = {line = 5, character = 10}, end = {line = 5, character = 13}},
+		},
+	}
+
+	test.expect_definition_locations(t, &source, locations[:])
+}
+
+@(test)
+ast_goto_selector_imported_package_distinct_type_skip_alias :: proc(t: ^testing.T) {
+	packages := make([dynamic]test.Package, context.temp_allocator)
+
+	append(&packages, test.Package{
+		pkg = "msdf",
+		source = `package msdf
+Base_Handle :: struct{}
+FontHandle :: distinct Base_Handle
+`,
+	})
+
+	source := test.Source{
+		main = `package test
+import "msdf"
+
+main :: proc() {
+	_: msdf.FontHand{*}le
+}
+`,
+		packages = packages[:],
+		config = {enable_definition_skip_alias = true},
+	}
+
+	locations := []common.Location{
+		{
+			uri = "file://test/msdf/package.odin",
+			range = {start = {line = 2, character = 0}, end = {line = 2, character = 10}},
 		},
 	}
 

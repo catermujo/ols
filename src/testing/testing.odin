@@ -658,7 +658,7 @@ expect_rename_locations :: proc(
 	setup(src)
 	defer teardown(src)
 
-	edit, ok := server.get_rename(src.document, new_name, cursor)
+	edit, ok := server.get_rename(src.document, new_name, cursor, &src.config)
 	if !ok {
 		log.error("Failed to get rename edits")
 		return
@@ -790,12 +790,14 @@ expect_action_with_edit :: proc(t: ^testing.T, src: ^Source, action_name: string
 }
 
 expect_action_with_edits :: proc(t: ^testing.T, src: ^Source, action_name: string, expected_new_texts: []string) {
+	cursor := source_remove_cursor(src)
+
 	setup(src)
 	defer teardown(src)
 
 	input_range := common.Range {
-		start = src.position,
-		end   = src.position,
+		start = cursor,
+		end   = cursor,
 	}
 	actions, ok := server.get_code_actions(src.document, input_range, &src.config)
 	if !ok {
