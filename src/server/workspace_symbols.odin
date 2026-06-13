@@ -21,32 +21,15 @@ cache: WorkspaceCache
 
 Workspace_Symbol_Scan_State :: struct {
 	pkgs:           [dynamic]string,
+	root:           string,
 	scanned_dirs:   int,
 	candidate_dirs: int,
 	odin_dirs:      int,
 	excluded_dirs:  int,
 }
 
-workspace_path_is_excluded :: proc(pkg: string) -> bool {
-	for exclude_path in common.config.profile.exclude_path {
-		exclude_forward, _ := filepath.replace_separators(exclude_path, '/', context.temp_allocator)
-
-		if exclude_forward[len(exclude_forward) - 2:] == "**" {
-			lower_pkg := strings.to_lower(pkg)
-			lower_exclude := strings.to_lower(exclude_forward[:len(exclude_forward) - 3])
-			if strings.contains(lower_pkg, lower_exclude) {
-				return true
-			}
-		} else {
-			lower_pkg := strings.to_lower(pkg)
-			lower_exclude := strings.to_lower(exclude_forward)
-			if lower_pkg == lower_exclude {
-				return true
-			}
-		}
-	}
-
-	return false
+workspace_path_is_excluded :: proc(pkg, root: string) -> bool {
+	return path_is_excluded_by_profile(pkg, root)
 }
 
 workspace_symbols_should_skip_dir :: proc(fullpath: string, state: rawptr) -> bool {
@@ -61,7 +44,7 @@ workspace_symbols_should_skip_dir :: proc(fullpath: string, state: rawptr) -> bo
 		}
 	}
 
-	if workspace_path_is_excluded(dir) {
+	if workspace_path_is_excluded(dir, data.root) {
 		data.excluded_dirs += 1
 		return true
 	}
@@ -76,6 +59,10 @@ workspace_symbols_collect_file :: proc(fullpath: string, state: rawptr) {
 	}
 
 	data := cast(^Workspace_Symbol_Scan_State)state
+	if workspace_path_is_excluded(fullpath, data.root) {
+		return
+	}
+
 	dir := filepath.dir(fullpath)
 	if !slice.contains(data.pkgs[:], dir) {
 		append(&data.pkgs, strings.clone(dir, context.temp_allocator))
@@ -103,6 +90,7 @@ get_workspace_symbols :: proc(query: string) -> (workspace_symbols: []WorkspaceS
 			uri := common.parse_uri(workspace.uri, context.temp_allocator) or_return
 			data := Workspace_Symbol_Scan_State {
 				pkgs = make([dynamic]string, 0, context.temp_allocator),
+				root = uri.path,
 			}
 			walk_tree_follow_symlink_dirs(
 				uri.path,

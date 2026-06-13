@@ -120,13 +120,14 @@ skip_file :: proc(filename: string) -> bool {
 
 Append_Packages_State :: struct {
 	pkgs:      ^[dynamic]string,
+	root:      string,
 	skip:      map[string]struct{},
 	allocator: runtime.Allocator,
 }
 
 append_packages_should_skip_dir :: proc(path: string, state: rawptr) -> bool {
 	data := cast(^Append_Packages_State)state
-	return path in data.skip
+	return path in data.skip || path_is_excluded_by_profile(path, data.root)
 }
 
 append_packages_collect_file :: proc(fullpath: string, state: rawptr) {
@@ -134,11 +135,15 @@ append_packages_collect_file :: proc(fullpath: string, state: rawptr) {
 		return
 	}
 
+	data := cast(^Append_Packages_State)state
+	if path_is_excluded_by_profile(fullpath, data.root) {
+		return
+	}
+
 	if file_has_ignore_file_tag(fullpath) {
 		return
 	}
 
-	data := cast(^Append_Packages_State)state
 	dir := filepath.dir(fullpath)
 	if !slice.contains(data.pkgs[:], dir) {
 		append(data.pkgs, strings.clone(dir, data.allocator))
@@ -150,6 +155,7 @@ append_packages_collect_file :: proc(fullpath: string, state: rawptr) {
 append_packages :: proc(path: string, pkgs: ^[dynamic]string, skip: map[string]struct{}, allocator := context.temp_allocator) {
 	data := Append_Packages_State {
 		pkgs      = pkgs,
+		root      = path,
 		skip      = skip,
 		allocator = allocator,
 	}

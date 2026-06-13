@@ -98,30 +98,10 @@ reference_import_cache_ensure_maps :: proc() {
 }
 
 reference_path_is_excluded :: proc(fullpath: string) -> bool {
-	forward_path, _ := filepath.replace_separators(fullpath, '/', context.temp_allocator)
-	lower_path := strings.to_lower(forward_path)
-
-	for exclude_path in common.config.profile.exclude_path {
-		exclude_forward, _ := filepath.replace_separators(exclude_path, '/', context.temp_allocator)
-		lower_exclude := strings.to_lower(exclude_forward)
-
-		if strings.has_suffix(lower_exclude, "/**") {
-			prefix := lower_exclude[:len(lower_exclude) - 3]
-			if lower_path == prefix ||
-			   (strings.has_prefix(lower_path, prefix) &&
-			    len(lower_path) > len(prefix) &&
-			    lower_path[len(prefix)] == '/') {
-				return true
-			}
-		} else if lower_path == lower_exclude {
-			return true
-		}
-	}
-
-	return false
+	return path_is_excluded_by_profile(fullpath)
 }
 
-reference_should_skip_dir :: proc(fullpath: string) -> bool {
+reference_should_skip_dir :: proc(fullpath: string, root := "") -> bool {
 	forward_path, _ := filepath.replace_separators(fullpath, '/', context.temp_allocator)
 	dir_name := filepath.base(forward_path)
 
@@ -131,15 +111,17 @@ reference_should_skip_dir :: proc(fullpath: string) -> bool {
 		}
 	}
 
-	return reference_path_is_excluded(forward_path)
-}
-
-reference_scan_tree_should_skip_dir :: proc(fullpath: string, _: rawptr) -> bool {
-	return reference_should_skip_dir(fullpath)
+	return path_is_excluded_by_profile(forward_path, root)
 }
 
 Reference_Scan_State :: struct {
 	scan_arena: runtime.Arena,
+	root:       string,
+}
+
+reference_scan_tree_should_skip_dir :: proc(fullpath: string, state: rawptr) -> bool {
+	scan_state := cast(^Reference_Scan_State)state
+	return reference_should_skip_dir(fullpath, scan_state.root)
 }
 
 reference_scan_tree_collect_file :: proc(fullpath: string, state: rawptr) {
@@ -147,11 +129,11 @@ reference_scan_tree_collect_file :: proc(fullpath: string, state: rawptr) {
 		return
 	}
 
-	if reference_path_is_excluded(fullpath) {
+	scan_state := cast(^Reference_Scan_State)state
+	if path_is_excluded_by_profile(fullpath, scan_state.root) {
 		return
 	}
 
-	scan_state := cast(^Reference_Scan_State)state
 	runtime.arena_free_all(&scan_state.scan_arena)
 	scan_allocator := runtime.arena_allocator(&scan_state.scan_arena)
 	file_data, err := os.read_entire_file(fullpath, scan_allocator)
@@ -569,19 +551,20 @@ collect_reference_cached_importers :: proc(pkg_name: string, paths: ^map[string]
 }
 
 reference_import_cache_scan_tree :: proc(root_dir: string) {
-	if root_dir == "" || reference_should_skip_dir(root_dir) {
+	root := path.clean(root_dir, context.temp_allocator)
+	root, _ = filepath.replace_separators(root, '/', context.temp_allocator)
+	if root == "" || reference_should_skip_dir(root, root) {
 		return
 	}
-
-	root, _ := filepath.clean(root_dir, context.temp_allocator)
-	root, _ = filepath.replace_separators(root, '/', context.temp_allocator)
 
 	if scanned, exists := reference_import_cache.scanned_roots[root]; exists && scanned {
 		return
 	}
 	reference_import_cache.scanned_roots[strings.clone(root, reference_cache_allocator())] = true
 
-	scan_state := Reference_Scan_State{}
+	scan_state := Reference_Scan_State {
+		root = root,
+	}
 	_ = runtime.arena_init(&scan_state.scan_arena, mem.Megabyte * 2, runtime.default_allocator())
 	defer runtime.arena_destroy(&scan_state.scan_arena)
 
@@ -1358,10 +1341,14 @@ get_references :: proc(
 	}
 
 	ast_context.position_hint = position_context.hint
-	ast_context.current_package = ast_context.document_package
 
 	get_globals(document.ast, &ast_context)
-	get_locals(&ast_context, &position_context)
+
+	ast_context.current_package = ast_context.document_package
+
+	if position_context.function != nil {
+		get_locals(&ast_context, &position_context)
+	}
 
 	locations, ok2 := resolve_references(
 		document,

@@ -6,6 +6,7 @@ import "core:slice"
 import "core:testing"
 import path "core:path/slashpath"
 
+import "src:common"
 import "src:server"
 
 make_symlink_tree :: proc(t: ^testing.T) -> (root, target: string) {
@@ -24,6 +25,13 @@ make_symlink_tree :: proc(t: ^testing.T) -> (root, target: string) {
 	}
 
 	return
+}
+
+reset_walk_config :: proc() {
+	clear(&common.config.workspace_folders)
+	clear(&common.config.collections)
+	clear(&common.config.profile.exclude_path)
+	server.reference_import_cache_reset()
 }
 
 @(test)
@@ -114,5 +122,87 @@ reference_import_cache_scan_tree_uses_logical_symlink_paths :: proc(t: ^testing.
 
 	if _, physical_ok := server.reference_import_cache.package_files[target_pkg]; physical_ok {
 		log.errorf("unexpected physical package cache entry for %q", target_pkg)
+	}
+}
+
+@(test)
+append_packages_honors_nested_profile_excludes :: proc(t: ^testing.T) {
+	defer reset_walk_config()
+
+	root, err := os.make_directory_temp("", "ols-exclude-root-*", context.allocator)
+	if err != nil {
+		log.error(t, "failed to create temp root", err)
+		return
+	}
+	defer os.remove_all(root)
+
+	excluded_pkg := path.join({root, "breakout", "build", "tmp_pkg"}, context.temp_allocator)
+	if err := os.mkdir_all(excluded_pkg); err != nil {
+		log.error(t, "failed to create excluded package dir", err)
+		return
+	}
+
+	excluded_file := path.join({excluded_pkg, "main.odin"}, context.temp_allocator)
+	if err := os.write_entire_file(excluded_file, "package tmp_pkg\n"); err != nil {
+		log.error(t, "failed to write excluded package file", err)
+		return
+	}
+
+	included_pkg := path.join({root, "game", "pkg"}, context.temp_allocator)
+	if err := os.mkdir_all(included_pkg); err != nil {
+		log.error(t, "failed to create included package dir", err)
+		return
+	}
+
+	included_file := path.join({included_pkg, "main.odin"}, context.temp_allocator)
+	if err := os.write_entire_file(included_file, "package pkg\n"); err != nil {
+		log.error(t, "failed to write included package file", err)
+		return
+	}
+
+	common.config.profile.exclude_path = make([dynamic]string, context.temp_allocator)
+	append(&common.config.profile.exclude_path, path.join({root, "build", "**"}, context.temp_allocator))
+
+	pkgs := make([dynamic]string, context.temp_allocator)
+	server.append_packages(root, &pkgs, {}, context.temp_allocator)
+
+	if slice.contains(pkgs[:], excluded_pkg) {
+		log.errorf("expected nested build package %q to be excluded", excluded_pkg)
+	}
+
+	if !slice.contains(pkgs[:], included_pkg) {
+		log.errorf("expected included package %q in %v", included_pkg, pkgs[:])
+	}
+}
+
+@(test)
+reference_path_is_excluded_matches_nested_profile_excludes :: proc(t: ^testing.T) {
+	defer reset_walk_config()
+
+	root, err := os.make_directory_temp("", "ols-exclude-root-*", context.allocator)
+	if err != nil {
+		log.error(t, "failed to create temp root", err)
+		return
+	}
+	defer os.remove_all(root)
+
+	uri := common.create_uri(root, context.temp_allocator)
+	common.config.workspace_folders = make([dynamic]common.WorkspaceFolder, 0, 1, context.temp_allocator)
+	append(&common.config.workspace_folders, common.WorkspaceFolder {
+		name = "test",
+		uri  = uri.uri,
+	})
+
+	common.config.profile.exclude_path = make([dynamic]string, context.temp_allocator)
+	append(&common.config.profile.exclude_path, path.join({root, "build", "**"}, context.temp_allocator))
+
+	excluded_file := path.join({root, "breakout", "build", "cache", "main.odin"}, context.temp_allocator)
+	if !server.reference_path_is_excluded(excluded_file) {
+		log.errorf("expected nested build path %q to be excluded", excluded_file)
+	}
+
+	included_file := path.join({root, "game", "pkg", "main.odin"}, context.temp_allocator)
+	if server.reference_path_is_excluded(included_file) {
+		log.errorf("unexpected exclude match for %q", included_file)
 	}
 }
