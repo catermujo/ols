@@ -314,6 +314,10 @@ is_skip_alias_candidate :: proc(ast_context: ^AstContext, symbol: Symbol) -> boo
 	if !ok || global.expr == nil {
 		return false
 	}
+	if global.type_expr != nil {
+		// Typed globals like `DAYLIGHT: Stamp` are declarations, not aliases.
+		return false
+	}
 	#partial switch v in global.expr.derived {
 	case ^ast.Ident, ^ast.Selector_Expr:
 		return true
@@ -433,23 +437,25 @@ resolve_definition_skip_alias_target :: proc(
 			}
 		}
 
-		if resolved_alias, ok := resolve_alias_symbol_target(ast_context, result, file); ok {
-			if pending_alias && is_config_selector_alias_global(ast_context, result, file) {
-				// Keep local alias definition for #config-backed values.
-				pending_alias = false
-			} else if pending_alias && is_config_backed_symbol(resolved_alias, file) {
-				// Keep local alias definition for #config-backed values.
-				pending_alias = false
-			} else if symbol_has_useful_location(result) && !symbol_has_useful_location(resolved_alias) {
-				// Keep existing target when alias resolution degrades into a keyword-like symbol with no location.
-				pending_alias = false
-			} else {
-				result = resolved_alias
-				changed = true
-				pending_alias = is_skip_alias_candidate(ast_context, result)
+		if pending_alias || result.value != nil {
+			if resolved_alias, ok := resolve_alias_symbol_target(ast_context, result, file); ok {
+				if pending_alias && is_config_selector_alias_global(ast_context, result, file) {
+					// Keep local alias definition for #config-backed values.
+					pending_alias = false
+				} else if pending_alias && is_config_backed_symbol(resolved_alias, file) {
+					// Keep local alias definition for #config-backed values.
+					pending_alias = false
+				} else if symbol_has_useful_location(result) && !symbol_has_useful_location(resolved_alias) {
+					// Keep existing target when alias resolution degrades into a keyword-like symbol with no location.
+					pending_alias = false
+				} else {
+					result = resolved_alias
+					changed = true
+					pending_alias = is_skip_alias_candidate(ast_context, result)
+				}
+			} else if pending_alias {
+				return {}, false
 			}
-		} else if pending_alias {
-			return {}, false
 		}
 
 		if resolved_basic, ok := resolve_basic_symbol_target(ast_context, result, file); ok {
@@ -473,6 +479,75 @@ resolve_definition_skip_alias_target :: proc(
 	}
 
 	return result, true
+}
+
+resolve_implicit_selector_skip_alias_member_target :: proc(
+	ast_context: ^AstContext,
+	symbol: Symbol,
+	member_name: string,
+	file: string,
+) -> (
+	result: Symbol,
+	ok: bool,
+) {
+	if symbol.type_expr == nil || member_name == "" {
+		return symbol, false
+	}
+
+	reset_ast_context(ast_context)
+	set_ast_package_set_scoped(ast_context, ast_context.document_package)
+
+	type_symbol, type_ok := resolve_type_expression(ast_context, symbol.type_expr)
+	if !type_ok {
+		return symbol, false
+	}
+	if resolved_alias, ok := resolve_definition_skip_alias_target(ast_context, type_symbol, file); ok {
+		type_symbol = resolved_alias
+	}
+
+	#partial switch v in type_symbol.value {
+	case SymbolEnumValue:
+		for name, i in v.names {
+			if strings.compare(name, member_name) == 0 {
+				type_symbol.range = v.ranges[i]
+				return type_symbol, true
+			}
+		}
+	case SymbolUnionValue:
+		for type in v.types {
+			enum_symbol, enum_ok := resolve_type_expression(ast_context, type)
+			if !enum_ok {
+				continue
+			}
+			value, value_ok := enum_symbol.value.(SymbolEnumValue)
+			if !value_ok {
+				continue
+			}
+			for name, i in value.names {
+				if strings.compare(name, member_name) == 0 {
+					enum_symbol.range = value.ranges[i]
+					return enum_symbol, true
+				}
+			}
+		}
+	case SymbolBitSetValue:
+		enum_symbol, enum_ok := resolve_type_expression(ast_context, v.expr)
+		if !enum_ok {
+			return symbol, false
+		}
+		value, value_ok := enum_symbol.value.(SymbolEnumValue)
+		if !value_ok {
+			return symbol, false
+		}
+		for name, i in value.names {
+			if strings.compare(name, member_name) == 0 {
+				enum_symbol.range = value.ranges[i]
+				return enum_symbol, true
+			}
+		}
+	}
+
+	return symbol, false
 }
 
 get_definition_location :: proc(document: ^Document, position: common.Position, config: ^common.Config) -> ([]common.Location, bool) {
@@ -517,7 +592,14 @@ get_definition_location :: proc(document: ^Document, position: common.Position, 
 			position_context.implicit_selector_expr,
 		); ok {
 			if config.enable_definition_skip_alias {
-				if skip_resolved, ok := resolve_definition_skip_alias_target(&ast_context, resolved, document.fullpath); ok {
+				if member_resolved, ok := resolve_implicit_selector_skip_alias_member_target(
+					&ast_context,
+					resolved,
+					position_context.implicit_selector_expr.field.name,
+					document.fullpath,
+				); ok {
+					resolved = member_resolved
+				} else if skip_resolved, ok := resolve_definition_skip_alias_target(&ast_context, resolved, document.fullpath); ok {
 					resolved = skip_resolved
 				} else {
 					return {}, false

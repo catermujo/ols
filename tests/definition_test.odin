@@ -1309,6 +1309,115 @@ main :: proc() {
 }
 
 @(test)
+ast_goto_typed_global_assignment_preserves_global_definition :: proc(t: ^testing.T) {
+	source := test.Source{
+		main = `package test
+Base_Stamp :: struct{}
+Stamp :: Base_Stamp
+DAYLIGHT: Stamp
+
+main :: proc() {
+	DAYL{*}IGHT = Stamp{}
+}
+`,
+		config = {enable_definition_skip_alias = true},
+	}
+
+	locations := []common.Location{
+		{
+			range = {start = {line = 3, character = 0}, end = {line = 3, character = 8}},
+		},
+	}
+
+	test.expect_definition_locations(t, &source, locations[:])
+}
+
+@(test)
+ast_goto_implicit_enum_through_reexport_alias_skip_alias :: proc(t: ^testing.T) {
+	packages := make([dynamic]test.Package, context.temp_allocator)
+
+	append(&packages, test.Package{
+		pkg = "dep",
+		source = `package dep
+My_Enum :: enum {
+	One,
+	Two,
+}
+`,
+	})
+
+	source := test.Source{
+		main = `package test
+import dep "dep"
+
+Alias :: dep.My_Enum
+
+main :: proc(v: Alias) {
+	switch v {
+	case .T{*}wo:
+	}
+}
+`,
+		packages = packages[:],
+		config = {enable_definition_skip_alias = true},
+	}
+
+	locations := []common.Location{
+		{
+			uri = "file://test/dep/package.odin",
+			range = {start = {line = 3, character = 1}, end = {line = 3, character = 4}},
+		},
+	}
+
+	test.expect_definition_locations(t, &source, locations[:])
+}
+
+@(test)
+ast_goto_implicit_enum_through_generated_same_package_reexport_skip_alias :: proc(t: ^testing.T) {
+	packages := make([dynamic]test.Package, context.temp_allocator)
+
+	append(&packages, test.Package{
+		pkg = "dep",
+		source = `package dep
+My_Enum :: enum {
+	One,
+	Two,
+}
+`,
+	})
+	append(&packages, test.Package{
+		pkg = "",
+		file = "test/@reexport.generated.odin",
+		source = `package test
+import dep "dep"
+
+Alias :: dep.My_Enum
+`,
+	})
+
+	source := test.Source{
+		main = `package test
+main :: proc(v: Alias) {
+	switch v {
+	case .T{*}wo:
+	}
+}
+`,
+		packages = packages[:],
+		config = {enable_definition_skip_alias = true},
+	}
+
+	locations := []common.Location{
+		{
+			uri = "file://test/dep/package.odin",
+			range = {start = {line = 3, character = 1}, end = {line = 3, character = 4}},
+		},
+	}
+
+	test.expect_definition_locations(t, &source, locations[:])
+}
+
+@(test)
 ast_goto_identifier_definition_skip_distinct_global :: proc(t: ^testing.T) {
 	source := test.Source{
 		main = `package test
