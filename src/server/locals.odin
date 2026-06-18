@@ -1354,6 +1354,7 @@ get_locals_proc_param_and_results :: proc(
 						flags,
 						"",
 						true,
+						arg.type,
 					)
 
 					if .Using in arg.flags {
