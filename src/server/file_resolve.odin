@@ -326,6 +326,10 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 				}
 			}
 
+			if _, _, ok := unwrap_comp_literal(n.field); ok {
+				resolve_node(n.field, data)
+			}
+
 			resolve_node(n.value, data)
 		} else if data.flag != .None && data.position_context.call != nil {
 			if symbol, ok := resolve_location_proc_param_name(data.ast_context, data.position_context); ok {

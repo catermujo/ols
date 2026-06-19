@@ -226,6 +226,14 @@ resolve_type_comp_literal :: proc(
 		}
 
 		if field_value, ok := elem.derived.(^ast.Field_Value); ok { 	//named
+			if comp_lit, _, ok := unwrap_comp_literal(field_value.field); ok {
+				if s, ok := current_symbol.value.(SymbolMapValue); ok {
+					if symbol, ok := resolve_type_expression(ast_context, s.key); ok {
+						return resolve_type_comp_literal(ast_context, position_context, symbol, comp_lit)
+					}
+				}
+			}
+
 			if comp_lit, ref_n, ok := unwrap_comp_literal(field_value.value); ok {
 				if comp_lit.type != nil {
 					if symbol, ok := resolve_type_expression(ast_context, comp_lit.type); ok {
@@ -286,6 +294,10 @@ resolve_type_comp_literal :: proc(
 					}
 				} else if s, ok := current_symbol.value.(SymbolFixedArrayValue); ok {
 					if symbol, ok := resolve_type_expression(ast_context, s.expr); ok {
+						return resolve_type_comp_literal(ast_context, position_context, symbol, comp_lit)
+					}
+				} else if s, ok := current_symbol.value.(SymbolMapValue); ok {
+					if symbol, ok := resolve_type_expression(ast_context, s.value); ok {
 						return resolve_type_comp_literal(ast_context, position_context, symbol, comp_lit)
 					}
 				}
