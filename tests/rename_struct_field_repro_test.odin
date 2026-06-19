@@ -73,3 +73,55 @@ bar = make(bar = 1),
 
 	test.expect_rename_locations(t, &source, "renamed", locations[:], excluded)
 }
+
+@(test)
+ast_rename_struct_field_map_literal_value_from_declaration :: proc(t: ^testing.T) {
+	source := test.Source{
+		main = `package test
+
+Foo :: struct {
+foo{*}: int,
+}
+
+main :: proc() {
+m: map[int]Foo = {
+0 = {foo = 1},
+}
+_ = m
+}
+`,
+	}
+
+	locations := []common.Location{
+		{range = {start = {line = 3, character = 0}, end = {line = 3, character = 3}}},
+		{range = {start = {line = 8, character = 5}, end = {line = 8, character = 8}}},
+	}
+
+	test.expect_rename_locations(t, &source, "renamed", locations[:])
+}
+
+@(test)
+ast_rename_struct_field_map_literal_key_from_declaration :: proc(t: ^testing.T) {
+	source := test.Source{
+		main = `package test
+
+Foo :: struct {
+a{*}: int,
+}
+
+main :: proc() {
+m: map[Foo]int = {
+{a = 1} = 0,
+}
+_ = m
+}
+`,
+	}
+
+	locations := []common.Location{
+		{range = {start = {line = 3, character = 0}, end = {line = 3, character = 1}}},
+		{range = {start = {line = 8, character = 1}, end = {line = 8, character = 2}}},
+	}
+
+	test.expect_rename_locations(t, &source, "renamed", locations[:])
+}
