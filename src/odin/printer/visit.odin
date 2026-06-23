@@ -1,5 +1,6 @@
 package odin_printer
 
+import "core:fmt"
 import "core:log"
 import "core:odin/ast"
 import "core:odin/parser"
@@ -398,6 +399,16 @@ is_call_expr_nestable :: proc(list: []^ast.Expr) -> bool {
 	}
 
 	return true
+}
+
+@(private)
+call_expr_group_id :: proc(call_expr: ^ast.Call_Expr) -> string {
+	return fmt.tprintf("call_expr_%d", call_expr.open.offset)
+}
+
+@(private)
+comp_lit_source_length :: proc(p: ^Printer, comp_lit: ast.Comp_Lit) -> int {
+	return max(comp_lit.end.offset - comp_lit.pos.offset, 0)
 }
 
 @(private)
@@ -1750,6 +1761,8 @@ visit_expr :: proc(
 	case ^ast.Implicit_Selector_Expr:
 		document = cons(text("."), text_position(p, v.field.name, v.field.pos))
 	case ^ast.Call_Expr:
+		call_group_id := call_expr_group_id(v)
+
 		switch v.inlining {
 		case .None:
 		case .Inline:
@@ -1772,7 +1785,7 @@ visit_expr :: proc(
 		if is_call_expr_nestable(v.args) {
 			document = cons(document, nest(cons(break_with(""), visit_call_exprs(p, v))))
 		} else {
-			document = cons(document, nest_if_break(cons(break_with(""), visit_call_exprs(p, v)), "call_expr"))
+			document = cons(document, nest_if_break(cons(break_with(""), visit_call_exprs(p, v)), call_group_id))
 		}
 
 		document = cons(document, break_with(""), text(")"))
@@ -1784,11 +1797,11 @@ visit_expr :: proc(
 
 		//We enforce a break if comments exists inside the call args
 		if contains_comments {
-			document = enforce_break(document, Document_Group_Options{id = "call_expr"})
+			document = enforce_break(document, Document_Group_Options{id = call_group_id})
 		} else if contains_do {
 			document = enforce_fit(document)
 		} else {
-			document = group(document, Document_Group_Options{id = "call_expr"})
+			document = group(document, Document_Group_Options{id = call_group_id})
 		}
 	case ^ast.Typeid_Type:
 		document = text("typeid")
@@ -1860,7 +1873,8 @@ visit_expr :: proc(
 		should_newline &=
 			(called_from == .Value_Decl ||
 				called_from == .Assignment_Stmt ||
-				(called_from == .Call_Expr && comp_lit_contains_blocks(p, v^)))
+				(called_from == .Call_Expr &&
+					(comp_lit_contains_blocks(p, v^) || comp_lit_source_length(p, v^) > p.config.character_width)))
 		should_newline &= len(v.elems) != 0
 
 		should_newline |= contains_comments_in_range(p, v.pos, v.end)

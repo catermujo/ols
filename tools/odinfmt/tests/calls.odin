@@ -57,6 +57,17 @@ calls :: proc() {
 			1,2,
 			3,4},
 	)
+	_ = ply.UI(g.ui.panel.card[slot].id)(Style{
+		color = dr.BLACK * (.35 if g.gui.hand.drag.active && g.gui.hand.drag.slot == slot else .55),
+		corner = ply.corner_all(18),
+		border = {color = title_color, width = {1, 1, 1, 1, 0}},
+		layout = {
+			size = {ply.fixed(card_panel.card_size.x), ply.fixed(card_panel.card_size.y)},
+			dir = .v,
+			pad = {8, 8, 8, 8},
+			gap = 2,
+		},
+	})
 	_ = vk.CreateInsance(matrix[2, 2]i32 {
 		1, 2,
 		3, 4,
