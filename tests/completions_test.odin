@@ -22,6 +22,21 @@ ast_directive_completion_no_copy :: proc(t: ^testing.T) {
 }
 
 @(test)
+ast_directive_completion_trigger_location :: proc(t: ^testing.T) {
+	source := test.Source {
+		main     = `package test
+
+		main :: proc() {
+			_ := #tri{*}
+		}
+		`,
+		packages = {},
+	}
+
+	test.expect_completion_labels(t, &source, "", {"trigger_location"})
+}
+
+@(test)
 ast_simple_struct_completion :: proc(t: ^testing.T) {
 	source := test.Source {
 		main     = `package test
