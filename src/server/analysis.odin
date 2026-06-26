@@ -1242,7 +1242,7 @@ resolve_basic_directive :: proc(
 	bool,
 ) {
 	switch directive.name {
-	case "caller_location":
+	case "caller_location", "trigger_location":
 		ident := new_type(ast.Ident, directive.pos, directive.end, ast_context.allocator)
 		ident.name = "Source_Code_Location"
 		set_ast_package_set_scoped(ast_context, ast_context.document_package)

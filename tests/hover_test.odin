@@ -6325,6 +6325,22 @@ ast_hover_directives_config_info :: proc(t: ^testing.T) {
 }
 
 @(test)
+ast_hover_directives_assert_trigger_location_info :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+		main :: proc() {
+			#a{*}ssert(true)
+		}
+		`,
+	}
+	test.expect_hover(
+		t,
+		&source,
+		"#assert(<bool>)\n// or\n#assert(<bool>, <string>)\n// or\n#assert(<bool>, #trigger_location)\n// or\n#assert(<bool>, <string>, #trigger_location)\n\nUnlike `assert`, `#assert` runs at compile-time. `#assert` breaks compilation if the given bool expression is false, and thus #assert is useful for catching bugs before they ever even reach run-time. It also has no run-time cost.\n\n`#assert` also accepts an optional message and an optional final location argument such as `#trigger_location` or `#location(...)`.",
+	)
+}
+
+@(test)
 ast_hover_struct_tag_no_copy :: proc(t: ^testing.T) {
 	source := test.Source {
 		main = `package test
