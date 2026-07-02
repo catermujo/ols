@@ -1850,6 +1850,21 @@ resolve_soa_selector_field :: proc(
 	return {}, false
 }
 
+count_swizzle_components :: proc(field: string) -> (int, bool) {
+	components_count := 0
+	for c in field {
+		if c == 'x' || c == 'y' || c == 'z' || c == 'w' || c == 'r' || c == 'g' || c == 'b' || c == 'a' {
+			components_count += 1
+		} else {
+			return 0, false
+		}
+	}
+	if components_count == 0 {
+		return 0, false
+	}
+	return components_count, true
+}
+
 resolve_selector_expression :: proc(ast_context: ^AstContext, node: ^ast.Selector_Expr) -> (Symbol, bool) {
 	selector := Symbol{}
 	if ok := internal_resolve_type_expression(ast_context, node.expr, &selector); ok {
@@ -1871,19 +1886,10 @@ resolve_selector_expression :: proc(ast_context: ^AstContext, node: ^ast.Selecto
 			if symbol, ok := resolve_soa_selector_field(ast_context, selector, s.expr, s.len, node.field.name); ok {
 				return symbol, ok
 			}
-			components_count := 0
-			for c in node.field.name {
-				if c == 'x' || c == 'y' || c == 'z' || c == 'w' || c == 'r' || c == 'g' || c == 'b' || c == 'a' {
-					components_count += 1
-				} else {
-					return {}, false
-				}
-			}
-
-			if components_count == 0 {
+			components_count, ok := count_swizzle_components(node.field.name)
+			if !ok {
 				return {}, false
 			}
-
 			if components_count == 1 {
 				set_ast_package_from_symbol_scoped(ast_context, selector)
 
@@ -3826,7 +3832,13 @@ resolve_location_symbol_selector :: proc(
 		}
 		return resolve_soa_selector_field(ast_context, symbol, v.expr, nil, field)
 	case SymbolFixedArrayValue:
-		return resolve_soa_selector_field(ast_context, symbol, v.expr, v.len, field)
+		if resolved, ok := resolve_soa_selector_field(ast_context, symbol, v.expr, v.len, field); ok {
+			return resolved, true
+		}
+		if _, ok := count_swizzle_components(field); ok && symbol.range != {} {
+			return symbol, true
+		}
+		return {}, false
 	case SymbolMapValue:
 		if field == "allocator" {
 			return resolve_container_allocator_location(ast_context, "Raw_Map")
