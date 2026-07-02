@@ -14,8 +14,12 @@ import "src:server"
 import test "src:testing"
 
 reset_reference_config :: proc() {
-	clear(&common.config.collections)
-	clear(&common.config.profile.exclude_path)
+	delete(common.config.workspace_folders)
+	common.config.workspace_folders = nil
+	delete(common.config.collections)
+	common.config.collections = nil
+	delete(common.config.profile.exclude_path)
+	common.config.profile.exclude_path = nil
 	server.reference_import_cache_reset()
 }
 
@@ -48,7 +52,7 @@ reference_same_directory_different_declared_packages_do_not_spill :: proc(t: ^te
 	server.setup_index(server.get_builtin_path())
 	defer server.free_index()
 
-	root, err := os.make_directory_temp("", "ols-ref-same-dir-*", context.allocator)
+	root, err := os.make_directory_temp("", "ols-ref-same-dir-*", context.temp_allocator)
 	if err != nil {
 		log.error(t, "failed to create temp dir", err)
 		return

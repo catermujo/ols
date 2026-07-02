@@ -138,22 +138,22 @@ get_hover_information :: proc(document: ^Document, position: common.Position) ->
 								}
 							}
 						} else if value, ok := field.derived.(^ast.Field_Value); ok {
-							if position_in_node(value.field, position_context.position) {
-								if ident, ok := value.field.derived.(^ast.Ident); ok {
-									for name, i in v.names {
-										if name == ident.name {
-											construct_enum_field_symbol(&enum_symbol, v, i)
-											hover.range = enum_symbol.range
-											hover.contents = write_hover_content(&ast_context, enum_symbol)
-										}
+						if position_in_node(value.field, position_context.position) {
+							if ident, ok := value.field.derived.(^ast.Ident); ok {
+								for name, i in v.names {
+									if name == ident.name {
+										construct_enum_field_symbol(&enum_symbol, v, i)
+										hover.range = enum_symbol.range
+										hover.contents = write_hover_content(&ast_context, enum_symbol)
 									}
 								}
-								return hover, true, true
 							}
+							return hover, true, true
 						}
 					}
 				}
 			}
+		}
 		}
 
 		if position_context.struct_type != nil {
@@ -444,6 +444,17 @@ get_hover_information :: proc(document: ^Document, position: common.Position) ->
 			if call, ok := position_context.call.derived.(^ast.Call_Expr); ok {
 				if !position_in_exprs(call.args, position_context.position) {
 					ast_context.call = call
+				}
+			}
+		}
+
+		if position_context.enum_type != nil &&
+		   position_context.value_decl != nil &&
+		   len(position_context.value_decl.names) != 0 {
+			if enum_symbol, ok := resolve_type_expression(&ast_context, position_context.value_decl.names[0]); ok {
+				if hover, ok := get_hover_enum_field(&ast_context, enum_symbol, ident.name); ok {
+					hover.range = common.get_token_range(position_context.identifier^, document.ast.src)
+					return hover, true, true
 				}
 			}
 		}

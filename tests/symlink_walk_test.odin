@@ -12,13 +12,13 @@ import "src:server"
 make_symlink_tree :: proc(t: ^testing.T) -> (root, target: string) {
 	err: os.Error
 
-	root, err = os.make_directory_temp("", "ols-symlink-root-*", context.allocator)
+	root, err = os.make_directory_temp("", "ols-symlink-root-*", context.temp_allocator)
 	if err != nil {
 		log.error(t, "failed to create temp root", err)
 		return
 	}
 
-	target, err = os.make_directory_temp("", "ols-symlink-target-*", context.allocator)
+	target, err = os.make_directory_temp("", "ols-symlink-target-*", context.temp_allocator)
 	if err != nil {
 		log.error(t, "failed to create temp target", err)
 		return
@@ -28,9 +28,12 @@ make_symlink_tree :: proc(t: ^testing.T) -> (root, target: string) {
 }
 
 reset_walk_config :: proc() {
-	clear(&common.config.workspace_folders)
-	clear(&common.config.collections)
-	clear(&common.config.profile.exclude_path)
+	delete(common.config.workspace_folders)
+	common.config.workspace_folders = nil
+	delete(common.config.collections)
+	common.config.collections = nil
+	delete(common.config.profile.exclude_path)
+	common.config.profile.exclude_path = nil
 	server.reference_import_cache_reset()
 }
 
@@ -129,7 +132,7 @@ reference_import_cache_scan_tree_uses_logical_symlink_paths :: proc(t: ^testing.
 append_packages_honors_nested_profile_excludes :: proc(t: ^testing.T) {
 	defer reset_walk_config()
 
-	root, err := os.make_directory_temp("", "ols-exclude-root-*", context.allocator)
+	root, err := os.make_directory_temp("", "ols-exclude-root-*", context.temp_allocator)
 	if err != nil {
 		log.error(t, "failed to create temp root", err)
 		return
@@ -179,7 +182,7 @@ append_packages_honors_nested_profile_excludes :: proc(t: ^testing.T) {
 reference_path_is_excluded_matches_nested_profile_excludes :: proc(t: ^testing.T) {
 	defer reset_walk_config()
 
-	root, err := os.make_directory_temp("", "ols-exclude-root-*", context.allocator)
+	root, err := os.make_directory_temp("", "ols-exclude-root-*", context.temp_allocator)
 	if err != nil {
 		log.error(t, "failed to create temp root", err)
 		return

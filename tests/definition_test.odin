@@ -1557,7 +1557,7 @@ when EDI{*}TOR {
 
 	locations := []common.Location{
 		{
-			uri = "file://test/test.odin",
+			uri = "file://test/main.odin",
 			range = {start = {line = 3, character = 0}, end = {line = 3, character = 6}},
 		},
 	}

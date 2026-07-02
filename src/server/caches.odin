@@ -76,7 +76,8 @@ clear_all_package_aliases :: proc() {
 		delete(alias_array)
 	}
 
-	clear(&build_cache.pkg_aliases)
+	delete(build_cache.pkg_aliases)
+	build_cache.pkg_aliases = nil
 	reference_import_cache_reset()
 }
 
