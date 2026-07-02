@@ -1,8 +1,9 @@
 package tests
 
-import "core:fmt"
 import "core:log"
+import path "core:path/slashpath"
 import "core:slice"
+import "core:strings"
 import "core:testing"
 
 import "src:common"
@@ -18,14 +19,15 @@ test_root_path :: proc() -> string {
 
 reset_package_alias_test_state :: proc() {
 	server.clear_all_package_aliases()
-	clear(&common.config.collections)
+	delete(common.config.collections)
+	common.config.collections = nil
 }
 
 @(test)
 package_alias_adds_matching_collection_only :: proc(t: ^testing.T) {
 	root := test_root_path()
-	vendor_root := fmt.tprintf("%s/vendor", root)
-	pkg_dir := fmt.tprintf("%s/rt/drift", root)
+	vendor_root := path.join({root, "vendor"}, context.temp_allocator)
+	pkg_dir := path.join({root, "rt", "drift"}, context.temp_allocator)
 
 	common.config.collections = make(map[string]string)
 	common.config.collections["studio"] = root
@@ -52,14 +54,14 @@ package_alias_adds_matching_collection_only :: proc(t: ^testing.T) {
 @(test)
 package_alias_remove_drops_empty_collection_entry :: proc(t: ^testing.T) {
 	root := test_root_path()
-	pkg_dir := fmt.tprintf("%s/rt/drift", root)
+	pkg_dir := path.join({root, "rt", "drift"}, context.temp_allocator)
 
 	common.config.collections = make(map[string]string)
 	common.config.collections["studio"] = root
 
 	server.build_cache.pkg_aliases = make(map[string][dynamic]string)
 	aliases := make([dynamic]string)
-	append(&aliases, "rt/drift")
+	append(&aliases, strings.clone("rt/drift"))
 	server.build_cache.pkg_aliases["studio"] = aliases
 	defer reset_package_alias_test_state()
 

@@ -19,6 +19,7 @@ File :: struct {
 
 Package :: struct {
 	pkg:    string,
+	file:   string, // backwards compatable–for named single-file packages
 	source: string, // backwards compatable–for single-file packages
 	files:  []File,
 }
@@ -29,6 +30,8 @@ Source :: struct {
 	packages:    []Package,
 	document:    ^server.Document,
 	collections: map[string]string,
+	cursor:      common.Position,
+	has_cursor:  bool,
 	config:      common.Config,
 }
 
@@ -95,13 +98,19 @@ setup :: proc(src: ^Source) {
 		if len(src_pkg.files) > 0 do for f in src_pkg.files {
 			process_file(f.name, f.source, pkg)
 		} else {
-			process_file("package.odin", src_pkg.source, pkg)
+			filename := src_pkg.file
+			if filename == "" {
+				filename = "package.odin"
+			}
+			process_file(filename, src_pkg.source, pkg)
 		}
 	}
 
 	process_file :: proc(filename: string, source: string, pkg: ^ast.Package) {
-
-		fullpath := strings.join({pkg.fullpath, filename}, "/", context.temp_allocator)
+		fullpath := filename
+		if !strings.has_prefix(filename, "test/") {
+			fullpath = strings.join({pkg.fullpath, filename}, "/", context.temp_allocator)
+		}
 
 		p := parser.Parser {
 			err   = parser.default_error_handler,
@@ -138,6 +147,9 @@ teardown :: proc(src: ^Source) {
 }
 
 source_remove_cursor :: proc (src: ^Source) -> (cursor: common.Position) {
+	if src.has_cursor {
+		return src.cursor
+	}
 
 	source: ^string
 	if src.main != "" {
@@ -178,6 +190,9 @@ source_remove_cursor :: proc (src: ^Source) -> (cursor: common.Position) {
 			cursor.character += 1
 		}
 	}
+
+	src.cursor = cursor
+	src.has_cursor = true
 
 	return
 }

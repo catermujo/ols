@@ -744,8 +744,8 @@ main :: proc() {
 	client_id := "a"
 	has_client_id := true
 	if !has_client_id {
-		__ols_inline_ret_0 = Config{}
-		__ols_inline_ret_1 = Runtime_Data{}
+		__ols_inline_ret_0 = {}
+		__ols_inline_ret_1 = {}
 		__ols_inline_ret_2 = false
 		break load_runtime
 	}

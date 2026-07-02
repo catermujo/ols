@@ -35,40 +35,47 @@ reference_cache_allocator :: proc() -> mem.Allocator {
 }
 
 reference_import_cache_reset :: proc() {
+	allocator := reference_cache_allocator()
+
 	for _, imports in reference_import_cache.file_imports {
 		for import_path in imports {
-			delete(import_path)
+			delete(import_path, allocator)
 		}
 		delete(imports)
 	}
-	clear(&reference_import_cache.file_imports)
+	delete(reference_import_cache.file_imports)
+	reference_import_cache.file_imports = nil
 
 	for fullpath, pkg_name in reference_import_cache.file_package_names {
-		delete(fullpath)
-		delete(pkg_name)
+		delete(fullpath, allocator)
+		delete(pkg_name, allocator)
 	}
-	clear(&reference_import_cache.file_package_names)
+	delete(reference_import_cache.file_package_names)
+	reference_import_cache.file_package_names = nil
 
 	for _, files in reference_import_cache.package_files {
 		for fullpath in files {
-			delete(fullpath)
+			delete(fullpath, allocator)
 		}
 		delete(files)
 	}
-	clear(&reference_import_cache.package_files)
+	delete(reference_import_cache.package_files)
+	reference_import_cache.package_files = nil
 
 	for _, files in reference_import_cache.importers_by_package {
 		for fullpath in files {
-			delete(fullpath)
+			delete(fullpath, allocator)
 		}
 		delete(files)
 	}
-	clear(&reference_import_cache.importers_by_package)
+	delete(reference_import_cache.importers_by_package)
+	reference_import_cache.importers_by_package = nil
 
 	for root in reference_import_cache.scanned_roots {
-		delete(root)
+		delete(root, allocator)
 	}
-	clear(&reference_import_cache.scanned_roots)
+	delete(reference_import_cache.scanned_roots)
+	reference_import_cache.scanned_roots = nil
 
 	reference_import_cache.initialized = false
 }
@@ -176,12 +183,14 @@ reference_append_unique_string :: proc(items: ^[dynamic]string, value: string) {
 }
 
 reference_remove_string :: proc(items: ^[dynamic]string, value: string) -> bool {
+	allocator := reference_cache_allocator()
+
 	for i := len(items^) - 1; i >= 0; i -= 1 {
 		if items[i] != value {
 			continue
 		}
 
-		delete(items[i])
+		delete(items[i], allocator)
 		ordered_remove(items, i)
 		return true
 	}
@@ -349,12 +358,13 @@ reference_import_cache_store_file :: proc(fullpath: string, import_paths: []stri
 
 	allocator := reference_cache_allocator()
 
-	package_files := &reference_import_cache.package_files[pkg_dir]
-	if package_files == nil {
-		reference_import_cache.package_files[strings.clone(pkg_dir, allocator)] = make([dynamic]string, 0, 8, allocator)
-		package_files = &reference_import_cache.package_files[pkg_dir]
+	package_files, ok := reference_import_cache.package_files[pkg_dir]
+	if !ok {
+		package_files = make([dynamic]string, 0, 8, allocator)
+		reference_import_cache.package_files[strings.clone(pkg_dir, allocator)] = package_files
 	}
-	reference_append_unique_string(package_files, forward_path)
+	reference_append_unique_string(&package_files, forward_path)
+	reference_import_cache.package_files[pkg_dir] = package_files
 
 	if declared_package_name != "" {
 		reference_import_cache.file_package_names[strings.clone(forward_path, allocator)] =
@@ -364,12 +374,13 @@ reference_import_cache_store_file :: proc(fullpath: string, import_paths: []stri
 	imports := make([dynamic]string, 0, len(import_paths), allocator)
 	for import_path in import_paths {
 		reference_append_unique_string(&imports, import_path)
-		importers := &reference_import_cache.importers_by_package[import_path]
-		if importers == nil {
-			reference_import_cache.importers_by_package[strings.clone(import_path, allocator)] = make([dynamic]string, 0, 8, allocator)
-			importers = &reference_import_cache.importers_by_package[import_path]
+		importers, ok := reference_import_cache.importers_by_package[import_path]
+		if !ok {
+			importers = make([dynamic]string, 0, 8, allocator)
+			reference_import_cache.importers_by_package[strings.clone(import_path, allocator)] = importers
 		}
-		reference_append_unique_string(importers, forward_path)
+		reference_append_unique_string(&importers, forward_path)
+		reference_import_cache.importers_by_package[import_path] = importers
 	}
 
 	reference_import_cache.file_imports[strings.clone(forward_path, allocator)] = imports
@@ -398,19 +409,23 @@ reference_import_cache_update_file :: proc(fullpath, src: string) {
 }
 
 reference_import_cache_remove_file :: proc(fullpath: string) {
+	allocator := reference_cache_allocator()
+
 	forward_path, _ := filepath.replace_separators(fullpath, '/', context.temp_allocator)
 	pkg_dir := filepath.dir(forward_path)
 
 	if imports, ok := reference_import_cache.file_imports[forward_path]; ok {
 		for import_path in imports {
-			importers := &reference_import_cache.importers_by_package[import_path]
-			if importers == nil {
+			importers, ok := reference_import_cache.importers_by_package[import_path]
+			if !ok {
 				continue
 			}
 
-			if reference_remove_string(importers, forward_path) && len(importers^) == 0 {
-				delete(importers^)
+			if reference_remove_string(&importers, forward_path) && len(importers) == 0 {
+				delete(importers)
 				delete_key(&reference_import_cache.importers_by_package, import_path)
+			} else {
+				reference_import_cache.importers_by_package[import_path] = importers
 			}
 		}
 
@@ -419,15 +434,16 @@ reference_import_cache_remove_file :: proc(fullpath: string) {
 	}
 
 	if pkg_name, ok := reference_import_cache.file_package_names[forward_path]; ok {
-		delete(pkg_name)
+		delete(pkg_name, allocator)
 		delete_key(&reference_import_cache.file_package_names, forward_path)
 	}
 
-	package_files := &reference_import_cache.package_files[pkg_dir]
-	if package_files != nil {
-		if reference_remove_string(package_files, forward_path) && len(package_files^) == 0 {
-			delete(package_files^)
+	if package_files, ok := reference_import_cache.package_files[pkg_dir]; ok {
+		if reference_remove_string(&package_files, forward_path) && len(package_files) == 0 {
+			delete(package_files)
 			delete_key(&reference_import_cache.package_files, pkg_dir)
+		} else {
+			reference_import_cache.package_files[pkg_dir] = package_files
 		}
 	}
 }
@@ -1346,7 +1362,7 @@ get_references :: proc(
 
 	ast_context.current_package = ast_context.document_package
 
-	if position_context.function != nil {
+	if position_context.function != nil || position_context.enum_type != nil {
 		get_locals(&ast_context, &position_context)
 	}
 

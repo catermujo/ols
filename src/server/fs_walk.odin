@@ -12,7 +12,7 @@ Walk_File_Callback :: proc(fullpath: string, state: rawptr)
 
 normalize_match_path :: proc(raw: string) -> string {
 	forward, _ := filepath.replace_separators(raw, '/', context.temp_allocator)
-	return strings.to_lower(forward)
+	return strings.to_lower(forward, context.temp_allocator)
 }
 
 path_matches_tree_prefix :: proc(path, prefix: string) -> bool {

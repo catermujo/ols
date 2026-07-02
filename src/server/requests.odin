@@ -675,7 +675,9 @@ read_ols_initialize_options :: proc(config: ^common.Config, ols_config: OlsConfi
 		}
 	}
 
-	log.infof("resolved odin root to: %q", odin_core_env)
+	if config.verbose {
+		log.infof("resolved odin root to: %q", odin_core_env)
+	}
 
 	// Insert the default collections if they are not specified in the config.
 	if odin_core_env != "" {
@@ -716,7 +718,9 @@ read_ols_initialize_options :: proc(config: ^common.Config, ols_config: OlsConfi
 		}
 	}
 
-	log.info(config.collections)
+	if config.verbose {
+		log.info(config.collections)
+	}
 }
 
 request_initialize :: proc(
