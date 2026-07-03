@@ -1519,8 +1519,8 @@ touch :: proc(root: ^Root) {
 
 	locations := []common.Location{
 		{range = {start = {line = 4, character = 12}, end = {line = 4, character = 18}}},
-		{range = {start = {line = 11, character = 8}, end = {line = 11, character = 14}}},
-		{range = {start = {line = 13, character = 23}, end = {line = 13, character = 29}}},
+		{range = {start = {line = 12, character = 8}, end = {line = 12, character = 14}}},
+		{range = {start = {line = 14, character = 23}, end = {line = 14, character = 29}}},
 	}
 
 	test.expect_reference_locations(t, &source, locations[:])
