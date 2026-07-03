@@ -803,6 +803,7 @@ request_initialize :: proc(
 	}
 
 	config.enable_overload_resolution = true
+	config.enable_definition_skip_alias = true
 
 	project_uri := ""
 
