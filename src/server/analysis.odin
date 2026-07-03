@@ -548,6 +548,10 @@ are_procedures_same_typed :: proc(
 	a_symbol, b_symbol: Symbol,
 	a, b: SymbolProcedureValue,
 ) -> bool {
+	if a.is_lambda != b.is_lambda {
+		return false
+	}
+
 	if !are_field_lists_same_typed(ast_context, a_symbol, b_symbol, a.arg_types, b.arg_types) {
 		return false
 	}
@@ -4474,6 +4478,7 @@ make_symbol_procedure_from_ast :: proc(
 		orig_arg_types     = arg_types[:],
 		generic            = v.generic,
 		diverging          = v.diverging,
+		is_lambda          = v.is_lambda,
 		calling_convention = v.calling_convention,
 		tags               = v.tags,
 		attributes         = attributes,

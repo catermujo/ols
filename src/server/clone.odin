@@ -195,6 +195,7 @@ clone_node :: proc(node: ^ast.Node, allocator: mem.Allocator, unique_strings: ^m
 	case ^ast.Distinct_Type:
 		r.type = clone_type(r.type, allocator, unique_strings)
 	case ^ast.Proc_Type:
+		r.captures = clone_type(r.captures, allocator, unique_strings)
 		r.params = auto_cast clone_type(r.params, allocator, unique_strings)
 		r.results = auto_cast clone_type(r.results, allocator, unique_strings)
 		r.calling_convention = clone_calling_convention(r.calling_convention, allocator, unique_strings)

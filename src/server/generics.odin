@@ -698,12 +698,20 @@ resolve_generic_function_symbol :: proc(
 
 
 	symbol := proc_symbol
+	proc_value := proc_symbol.value.(SymbolProcedureValue)
 	symbol.value = SymbolProcedureValue {
-		return_types      = return_types[:],
-		arg_types         = argument_types[:],
-		orig_arg_types    = params[:],
-		orig_return_types = results[:],
-		inlining          = inlining,
+		return_types       = return_types[:],
+		arg_types          = argument_types[:],
+		orig_arg_types     = params[:],
+		orig_return_types  = results[:],
+		generic            = proc_value.generic,
+		diverging          = proc_value.diverging,
+		is_lambda          = proc_value.is_lambda,
+		calling_convention = proc_value.calling_convention,
+		tags               = proc_value.tags,
+		attributes         = proc_value.attributes,
+		inlining           = inlining,
+		where_clauses      = proc_value.where_clauses,
 	}
 
 	return symbol, true

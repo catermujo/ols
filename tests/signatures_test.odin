@@ -462,6 +462,30 @@ ast_signature_global_variable_pointer :: proc(t: ^testing.T) {
 }
 
 @(test)
+lambda_argument_signature :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+
+		apply :: proc(f: lambda(int) -> int, v: int) -> int {
+			return f(v)
+		}
+
+		main :: proc() {
+			bias := 3
+			apply(lambda [bias](x: int) -> int { return x + bias }, {*})
+		}
+		`,
+	}
+
+	test.expect_signature_labels(
+		t,
+		&source,
+		{"test.apply :: proc(f: lambda(_: int) -> int, v: int) -> int"},
+		1,
+	)
+}
+
+@(test)
 index_variable_pointer_signature :: proc(t: ^testing.T) {
 	packages := make([dynamic]test.Package, context.temp_allocator)
 

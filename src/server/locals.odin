@@ -1444,6 +1444,91 @@ get_locals_poly :: proc(file: ast.File, params: ^ast.Field_List, ast_context: ^A
 	}
 }
 
+get_lambda_capture_ident :: proc(capture: ^ast.Expr) -> (^ast.Ident, bool, bool) {
+	if ident, ok := capture.derived.(^ast.Ident); ok {
+		return ident, false, true
+	}
+
+	if unary, ok := capture.derived.(^ast.Unary_Expr); ok && unary.op.kind == .And {
+		if ident, ok := unary.expr.derived.(^ast.Ident); ok {
+			return ident, true, true
+		}
+	}
+
+	return nil, false, false
+}
+
+get_locals_lambda_captures :: proc(
+	file: ast.File,
+	proc_lit: ^ast.Proc_Lit,
+	ast_context: ^AstContext,
+	document_position: ^DocumentPositionContext,
+) {
+	if proc_lit.type == nil || !proc_lit.type.is_lambda || len(proc_lit.type.captures) == 0 {
+		return
+	}
+
+	capture_context := make_ast_context(
+		ast_context.file,
+		ast_context.imports,
+		ast_context.document_package,
+		ast_context.uri,
+		ast_context.fullpath,
+		ast_context.allocator,
+	)
+	capture_context.globals = ast_context.globals
+	capture_context.non_mutable_only = false
+	capture_context.resolving_locals = true
+
+	saved_position := document_position.position
+	saved_nested_position := document_position.nested_position
+
+	document_position.position = proc_lit.pos.offset
+	document_position.nested_position = proc_lit.pos.offset
+
+	for function in document_position.functions {
+		if function == proc_lit {
+			continue
+		}
+
+		get_locals_stmt(file, function.body, &capture_context, document_position)
+	}
+
+	document_position.position = saved_position
+	document_position.nested_position = saved_nested_position
+
+	for capture in proc_lit.type.captures {
+		ident, by_reference, ok := get_lambda_capture_ident(capture)
+		if !ok {
+			continue
+		}
+
+		if local, ok := get_local(capture_context, ident^); ok {
+			flags := local.flags
+			if by_reference {
+				flags += {.Mutable}
+			}
+
+			store_local(
+				ast_context,
+				capture,
+				local.rhs,
+				ident.pos.offset,
+				ident.name,
+				local.local_global,
+				local.resolved_global,
+				flags,
+				local.pkg,
+				local.parameter,
+				local.type_expr,
+				local.value_expr,
+				local.docs,
+				local.comment,
+			)
+		}
+	}
+}
+
 get_function_locals :: proc(
 	file: ast.File,
 	function: ^ast.Node,
@@ -1471,10 +1556,14 @@ get_function_locals :: proc(
 
 	document_position.nested_position = document_position.position
 
-	for function in document_position.functions {
-		ast_context.non_mutable_only = true
-		document_position.position = function.end.offset
-		get_locals_stmt(file, function.body, ast_context, document_position)
+	if proc_lit.type != nil && proc_lit.type.is_lambda {
+		get_locals_lambda_captures(file, proc_lit, ast_context, document_position)
+	} else {
+		for function in document_position.functions {
+			ast_context.non_mutable_only = true
+			document_position.position = function.end.offset
+			get_locals_stmt(file, function.body, ast_context, document_position)
+		}
 	}
 
 	document_position.position = document_position.nested_position
