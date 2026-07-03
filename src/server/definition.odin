@@ -799,7 +799,6 @@ try_resolve_proc_group_overload :: proc(
 
 	return symbol
 }
-
 get_full_symbol_from_selector :: proc(
 	ast_context: ^AstContext,
 	selector_expr: ^ast.Node,

@@ -802,6 +802,8 @@ request_initialize :: proc(
 		return
 	}
 
+	config.enable_overload_resolution = true
+
 	project_uri := ""
 
 	if len(config.workspace_folders) > 0 {
