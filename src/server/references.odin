@@ -1081,6 +1081,83 @@ reference_resolve_skip_alias_symbol :: proc(
 	return symbol, true
 }
 
+reference_search_declared_package_name :: proc(document: ^Document, search_symbol: Symbol) -> string {
+	if search_symbol.uri == "" || strings.equal_fold(search_symbol.uri, document.uri.uri) {
+		return document.ast.pkg_name
+	}
+
+	search_fullpath := common.uri_to_path(search_symbol.uri, context.temp_allocator)
+	if search_fullpath == "" {
+		return ""
+	}
+
+	return reference_import_cache_file_package_name(search_fullpath)
+}
+
+reference_collect_resolved_symbol_locations :: proc(
+	search_symbol: Symbol,
+	config: ^common.Config,
+	current_file_only := false,
+	include_declaration := true,
+	allocator := context.allocator,
+) -> (
+	[]common.Location,
+	bool,
+) {
+	if search_symbol.uri == "" {
+		return nil, false
+	}
+
+	fullpath := common.uri_to_path(search_symbol.uri, context.temp_allocator)
+	if fullpath == "" {
+		return nil, false
+	}
+
+	data, err := os.read_entire_file(fullpath, context.temp_allocator)
+	if err != nil {
+		return nil, false
+	}
+
+	document := Document{
+		uri       = common.create_uri(fullpath, allocator),
+		text      = data,
+		used_text = len(data),
+		allocator = document_get_allocator(),
+	}
+	defer document_free_allocator(document.allocator)
+
+	document_setup(&document)
+	if refresh_err := document_refresh(&document, config, nil); refresh_err != .None {
+		return nil, false
+	}
+
+	position := search_symbol.range.start
+	if position.character < search_symbol.range.end.character {
+		position.character += 1
+	}
+
+	resolved_locations, ok := get_references(
+		&document,
+		position,
+		current_file_only,
+		include_declaration = include_declaration,
+		config = config,
+	)
+	if !ok {
+		return nil, false
+	}
+
+	locations := make([dynamic]common.Location, 0, len(resolved_locations), allocator)
+	for location in resolved_locations {
+		append(&locations, common.Location{
+			uri   = strings.clone(location.uri, allocator),
+			range = location.range,
+		})
+	}
+
+	return locations[:], true
+}
+
 resolve_references :: proc(
 	document: ^Document,
 	ast_context: ^AstContext,
@@ -1160,7 +1237,25 @@ resolve_references :: proc(
 		return locations[:], true
 	}
 
-	search_declared_package_name := document.ast.pkg_name
+	if config != nil &&
+	   config.enable_definition_skip_alias &&
+	   !reference_symbols_match(search_symbol, symbol) {
+		if resolved_locations, ok := reference_collect_resolved_symbol_locations(
+			search_symbol,
+			config,
+			current_file_only,
+			include_declaration,
+			ast_context.allocator,
+		); ok {
+			for location in resolved_locations {
+				append_location_unique(&locations, location, ast_context.allocator)
+			}
+
+			return locations[:], true
+		}
+	}
+
+	search_declared_package_name := reference_search_declared_package_name(document, search_symbol)
 
 	candidate_paths := make(map[string]struct{}, 0, context.temp_allocator)
 	reference_import_cache_ensure_initialized()
@@ -1263,10 +1358,15 @@ resolve_references :: proc(
 
 		document_setup(&document)
 
+		document_declared_package_name := reference_import_cache_file_package_name(fullpath)
+		if document_declared_package_name == "" {
+			document_declared_package_name = document.ast.pkg_name
+		}
+
 		if strings.equal_fold(search_symbol.pkg, dir) &&
 		   search_declared_package_name != "" &&
-		   document.ast.pkg_name != "" &&
-		   !strings.equal_fold(search_declared_package_name, document.ast.pkg_name) {
+		   document_declared_package_name != "" &&
+		   !strings.equal_fold(search_declared_package_name, document_declared_package_name) {
 			continue
 		}
 
@@ -1290,7 +1390,11 @@ resolve_references :: proc(
 
 		if in_pkg ||
 		   strings.equal_fold(search_symbol.pkg, dir) ||
-		   reference_cached_package_dir_imports_package(dir, document.ast.pkg_name, search_symbol.pkg) {
+		   reference_cached_package_dir_imports_package(
+		   	dir,
+		   	document_declared_package_name,
+		   	search_symbol.pkg,
+		   ) {
 			symbols_and_nodes := resolve_entire_file(&document, resolve_flag, context.allocator, target_name)
 			for k, v in symbols_and_nodes {
 				resolved_symbol, resolved_ok := reference_resolve_skip_alias_symbol(
