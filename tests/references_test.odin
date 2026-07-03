@@ -155,6 +155,142 @@ reference_source_may_reference_package_same_package :: proc(t: ^testing.T) {
 }
 
 @(test)
+reference_skip_alias_finds_target_package_references :: proc(t: ^testing.T) {
+	defer reset_reference_config()
+
+	server.setup_index(server.get_builtin_path())
+	defer server.free_index()
+
+	root, err := os.make_directory_temp("", "ols-ref-skip-alias-*", context.temp_allocator)
+	if err != nil {
+		log.error(t, "failed to create temp dir", err)
+		return
+	}
+	defer os.remove_all(root)
+
+	game_dir := path.join({root, "game"}, context.temp_allocator)
+	if err := os.mkdir_all(game_dir); err != nil {
+		log.error(t, "failed to create game dir", err)
+		return
+	}
+
+	tox_dir := path.join({root, "tox"}, context.temp_allocator)
+	if err := os.mkdir_all(tox_dir); err != nil {
+		log.error(t, "failed to create tox dir", err)
+		return
+	}
+
+	main_source, position, ok := reference_extract_cursor(`package game
+
+main :: proc() {
+    _ = alloc_chunk_sta{*}te(2)
+}
+`)
+	if !ok {
+		log.error(t, "failed to extract cursor")
+		return
+	}
+
+	reexport_source := `package game
+import tox "../tox"
+
+alloc_chunk_state :: tox.alloc_chunk_state
+`
+
+	tox_source := `package tox
+
+alloc_chunk_state :: proc(x: int) -> int {
+    return x
+}
+`
+
+	tox_use_source := `package tox
+
+use_it :: proc() {
+    _ = alloc_chunk_state(1)
+}
+`
+
+	main_file := path.join({game_dir, "gui.odin"}, context.temp_allocator)
+	if err := os.write_entire_file(main_file, main_source); err != nil {
+		log.error(t, "failed to write main file", err)
+		return
+	}
+
+	reexport_file := path.join({game_dir, "reexport.odin"}, context.temp_allocator)
+	if err := os.write_entire_file(reexport_file, reexport_source); err != nil {
+		log.error(t, "failed to write reexport file", err)
+		return
+	}
+
+	tox_file := path.join({tox_dir, "entry.odin"}, context.temp_allocator)
+	if err := os.write_entire_file(tox_file, tox_source); err != nil {
+		log.error(t, "failed to write tox file", err)
+		return
+	}
+
+	tox_use_file := path.join({tox_dir, "other.odin"}, context.temp_allocator)
+	if err := os.write_entire_file(tox_use_file, tox_use_source); err != nil {
+		log.error(t, "failed to write tox use file", err)
+		return
+	}
+
+	common.config.enable_definition_skip_alias = true
+	defer common.config.enable_definition_skip_alias = false
+
+	allocator := new(virtual.Arena, context.temp_allocator)
+	_ = virtual.arena_init_growing(allocator)
+	defer virtual.arena_destroy(allocator)
+
+	document := server.Document{
+		uri       = common.create_uri(main_file, context.temp_allocator),
+		text      = transmute([]u8)main_source,
+		used_text = len(main_source),
+		allocator = allocator,
+	}
+
+	server.document_setup(&document)
+	if refresh_err := server.document_refresh(&document, &common.config, nil); refresh_err != .None {
+		log.errorf("document_refresh failed: %v", refresh_err)
+		return
+	}
+
+	locations, refs_ok := server.get_references(&document, position, include_declaration = true, config = &common.config)
+	if !refs_ok {
+		log.error(t, "get_references failed")
+		return
+	}
+
+	main_uri := common.create_uri(main_file, context.temp_allocator).uri
+	tox_uri := common.create_uri(tox_file, context.temp_allocator).uri
+	tox_use_uri := common.create_uri(tox_use_file, context.temp_allocator).uri
+
+	expected := []common.Location{
+		{uri = main_uri, range = {start = {line = 3, character = 8}, end = {line = 3, character = 25}}},
+		{uri = tox_uri, range = {start = {line = 2, character = 0}, end = {line = 2, character = 17}}},
+		{uri = tox_use_uri, range = {start = {line = 3, character = 8}, end = {line = 3, character = 25}}},
+	}
+
+	if len(locations) != len(expected) {
+		log.errorf("expected %v references, got %v: %v", len(expected), len(locations), locations)
+	}
+
+	for want in expected {
+		found := false
+		for got in locations {
+			if got.uri == want.uri && got.range == want.range {
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			log.errorf("missing reference %v in %v", want, locations)
+		}
+	}
+}
+
+@(test)
 reference_source_may_reference_package_relative_import :: proc(t: ^testing.T) {
 	defer reset_reference_config()
 
