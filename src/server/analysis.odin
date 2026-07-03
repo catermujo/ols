@@ -3614,6 +3614,52 @@ resolve_location_selector :: proc(ast_context: ^AstContext, selector_expr: ^ast.
 	return {}, false
 }
 
+resolve_global_alias_location_target :: proc(
+	ast_context: ^AstContext,
+	global: GlobalExpr,
+) -> (
+	Symbol,
+	bool,
+) {
+	if global.expr == nil {
+		return {}, false
+	}
+
+	set_ast_package_set_scoped(ast_context, ast_context.document_package)
+
+	#partial switch expr in global.expr.derived {
+	case ^ast.Ident:
+		return resolve_location_identifier(ast_context, expr^)
+	case ^ast.Selector_Expr:
+		return resolve_location_selector(ast_context, &expr.node)
+	}
+
+	return {}, false
+}
+
+resolve_same_package_alias_location_target :: proc(
+	ast_context: ^AstContext,
+	symbol: Symbol,
+	file: string,
+) -> (
+	Symbol,
+	bool,
+) {
+	if symbol.name == "" || symbol.pkg != ast_context.document_package {
+		return symbol, false
+	}
+
+	global, ok := ast_context.globals[symbol.name]
+	if !ok || global.expr == nil || global.type_expr != nil {
+		if is_generated_uri(symbol.uri) {
+			return lookup_package_import_field_symbol(symbol.name, symbol.pkg, file)
+		}
+		return symbol, false
+	}
+
+	return resolve_global_alias_location_target(ast_context, global)
+}
+
 resolve_alias_symbol_target :: proc(
 	ast_context: ^AstContext,
 	symbol: Symbol,
@@ -3634,32 +3680,9 @@ resolve_alias_symbol_target :: proc(
 		return symbol, false
 	}
 
-	resolve_global_alias_expression_target :: proc(
-		ast_context: ^AstContext,
-		global: GlobalExpr,
-	) -> (
-		Symbol,
-		bool,
-	) {
-		if global.expr == nil {
-			return {}, false
-		}
-
-		set_ast_package_set_scoped(ast_context, ast_context.document_package)
-
-		#partial switch expr in global.expr.derived {
-		case ^ast.Ident:
-			return resolve_location_identifier(ast_context, expr^)
-		case ^ast.Selector_Expr:
-			return resolve_location_selector(ast_context, &expr.node)
-		}
-
-		return {}, false
-	}
-
 	if symbol.pkg == ast_context.document_package {
 		if global, ok := ast_context.globals[symbol.name]; ok {
-			if resolved, ok := resolve_global_alias_expression_target(ast_context, global); ok {
+			if resolved, ok := resolve_global_alias_location_target(ast_context, global); ok {
 				return resolved, true
 			}
 		}
@@ -3669,7 +3692,7 @@ resolve_alias_symbol_target :: proc(
 	if !ok {
 		if symbol.pkg == ast_context.document_package {
 			if global, ok := ast_context.globals[symbol.name]; ok {
-				if resolved, ok := resolve_global_alias_expression_target(ast_context, global); ok {
+				if resolved, ok := resolve_global_alias_location_target(ast_context, global); ok {
 					return resolved, true
 				}
 			}
@@ -3858,8 +3881,15 @@ resolve_location_symbol_selector :: proc(
 		if resolved, ok := resolve_soa_selector_field(ast_context, symbol, v.expr, v.len, field); ok {
 			return resolved, true
 		}
-		if _, ok := count_swizzle_components(field); ok && symbol.range != {} {
-			return symbol, true
+		if _, ok := count_swizzle_components(field); ok {
+			if .Distinct in symbol.flags {
+				if resolved_alias, ok := resolve_same_package_alias_location_target(ast_context, symbol, selector.pos.file); ok {
+					return resolved_alias, true
+				}
+			}
+			if symbol.range != {} {
+				return symbol, true
+			}
 		}
 		return {}, false
 	case SymbolMapValue:
