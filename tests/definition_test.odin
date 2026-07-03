@@ -1194,7 +1194,6 @@ ast_goto_proc_group_overload_with_selector :: proc(t: ^testing.T) {
 		}
 	`,
 		packages = packages[:],
-		config = {enable_overload_resolution = true},
 	}
 	// Should go to push_back (line 1, character 3) instead of append (line 3)
 	// because push_back is the overload being used with a single value argument
@@ -1218,7 +1217,6 @@ ast_goto_proc_group_overload_identifier :: proc(t: ^testing.T) {
 			app{*}end(&arr, 1)
 		}
 	`,
-		config = {enable_overload_resolution = true},
 	}
 	// Should go to push_back (line 1, character 2) instead of append (line 3)
 	// because push_back is the overload being used with a single value argument
