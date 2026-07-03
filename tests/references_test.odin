@@ -1500,6 +1500,37 @@ ast_reference_struct_comp_lit_field :: proc(t: ^testing.T) {
 }
 
 @(test)
+ast_reference_nested_anonymous_struct_field_in_parent_assignment :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+Root :: struct {
+    hand: struct {
+        drag: struct {
+            act{*}ive: bool,
+            slot: int,
+        },
+    },
+}
+
+touch :: proc(root: ^Root) {
+    root.hand.drag = {
+        active = true,
+    }
+    _ = root.hand.drag.active
+}
+`,
+	}
+
+	locations := []common.Location{
+		{range = {start = {line = 4, character = 12}, end = {line = 4, character = 18}}},
+		{range = {start = {line = 11, character = 8}, end = {line = 11, character = 14}}},
+		{range = {start = {line = 13, character = 23}, end = {line = 13, character = 29}}},
+	}
+
+	test.expect_reference_locations(t, &source, locations[:])
+}
+
+@(test)
 ast_references_inside_where_clause :: proc(t: ^testing.T) {
 	source := test.Source {
 		main = `package test

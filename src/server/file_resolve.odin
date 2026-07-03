@@ -180,6 +180,48 @@ local_scope_enum :: proc(data: ^FileResolveData, enum_type: ^ast.Enum_Type) {
 	get_locals_enum_fields(enum_type, data.ast_context, data.position_context)
 }
 
+resolve_file_comp_lit_field :: proc(
+	data: ^FileResolveData,
+	field_value: ^ast.Field_Value,
+) -> (
+	Symbol,
+	bool,
+) {
+	if symbol, ok := resolve_location_comp_lit_field(data.ast_context, data.position_context); ok {
+		return symbol, true
+	}
+
+	field_pos := field_value.pos
+	if field_value.field != nil {
+		field_pos = field_value.field.pos
+	}
+
+	position := common.token_pos_to_position(field_pos, data.document.ast.src)
+	position_context, ok := get_document_position_context(data.document, position, .Hover)
+	if !ok {
+		return {}, false
+	}
+
+	ast_context := make_ast_context(
+		data.document.ast,
+		data.document.imports,
+		data.document.package_name,
+		data.document.uri.uri,
+		data.document.fullpath,
+		data.ast_context.allocator,
+	)
+	ast_context.position_hint = position_context.hint
+
+	get_globals(data.document.ast, &ast_context)
+	ast_context.current_package = ast_context.document_package
+
+	if position_context.function != nil || position_context.enum_type != nil {
+		get_locals(&ast_context, &position_context)
+	}
+
+	return resolve_location_comp_lit_field(&ast_context, &position_context)
+}
+
 @(private = "file")
 resolve_binary_expr :: proc(binary: ^ast.Binary_Expr, data: ^FileResolveData) {
 	if data.position_context.parent_binary == nil {
@@ -317,9 +359,16 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 			}
 			resolve_node(n.value, data)
 		} else if data.flag != .None && data.position_context.comp_lit != nil {
-			data.position_context.position = n.pos.offset
+			old_position := data.position_context.position
+			defer data.position_context.position = old_position
 
-			if symbol, ok := resolve_location_comp_lit_field(data.ast_context, data.position_context); ok {
+			if n.field != nil {
+				data.position_context.position = n.field.pos.offset
+			} else {
+				data.position_context.position = n.pos.offset
+			}
+
+			if symbol, ok := resolve_file_comp_lit_field(data, n); ok {
 				data.symbols[cast(uintptr)node] = SymbolAndNode {
 					node   = n.field,
 					symbol = symbol,
