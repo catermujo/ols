@@ -891,6 +891,7 @@ free_ast_node :: proc(node: ^ast.Node, allocator: mem.Allocator) {
 	case ^ast.Proc_Type:
 		free_ast(n.params, allocator)
 		free_ast(n.results, allocator)
+		free_ast(n.captures, allocator)
 	case ^ast.Pointer_Type:
 		free_ast(n.elem, allocator)
 	case ^ast.Array_Type:
@@ -1077,7 +1078,9 @@ node_equal_node :: proc(a, b: ^ast.Node) -> bool {
 		}
 	case ^ast.Proc_Type:
 		if n, ok := a.derived.(^ast.Proc_Type); ok {
-			ret := node_equal(n.params, m.params)
+			ret := n.is_lambda == m.is_lambda
+			ret &= node_equal(n.captures, m.captures)
+			ret &= node_equal(n.params, m.params)
 			ret &= node_equal(n.results, m.results)
 			return ret
 		}
@@ -1216,6 +1219,41 @@ build_string_ast_array :: proc(array: $A/[dynamic]^$T, builder: ^strings.Builder
 	}
 }
 
+build_string_lambda_captures :: proc(captures: []^ast.Expr, builder: ^strings.Builder, remove_pointers: bool) {
+	strings.write_string(builder, "[")
+	for capture, i in captures {
+		build_string(capture, builder, remove_pointers)
+		if len(captures) - 1 != i {
+			strings.write_string(builder, ", ")
+		}
+	}
+	strings.write_string(builder, "]")
+}
+
+build_string_proc_type :: proc(
+	proc_type: ^ast.Proc_Type,
+	builder: ^strings.Builder,
+	remove_pointers: bool,
+	force_lambda_captures := false,
+) {
+	if proc_type.is_lambda {
+		strings.write_string(builder, "lambda")
+		if force_lambda_captures || len(proc_type.captures) > 0 {
+			build_string_lambda_captures(proc_type.captures, builder, remove_pointers)
+		}
+	} else {
+		strings.write_string(builder, "proc")
+	}
+
+	strings.write_string(builder, "(")
+	build_string(proc_type.params, builder, remove_pointers)
+	strings.write_string(builder, ")")
+	if proc_type.results != nil {
+		strings.write_string(builder, " -> ")
+		build_string(proc_type.results, builder, remove_pointers)
+	}
+}
+
 build_string_node :: proc(node: ^ast.Node, builder: ^strings.Builder, remove_pointers: bool, current_pkg := "") {
 	if node == nil {
 		return
@@ -1253,7 +1291,7 @@ build_string_node :: proc(node: ^ast.Node, builder: ^strings.Builder, remove_poi
 		strings.write_string(builder, "..")
 		build_string(n.expr, builder, remove_pointers)
 	case ^ast.Proc_Lit:
-		build_string(n.type, builder, remove_pointers)
+		build_string_proc_type(n.type, builder, remove_pointers, true)
 		build_string(n.body, builder, remove_pointers)
 	case ^ast.Comp_Lit:
 		build_string(n.type, builder, remove_pointers)
@@ -1368,13 +1406,7 @@ build_string_node :: proc(node: ^ast.Node, builder: ^strings.Builder, remove_poi
 			build_string(n.specialization, builder, remove_pointers)
 		}
 	case ^ast.Proc_Type:
-		strings.write_string(builder, "proc(")
-		build_string(n.params, builder, remove_pointers)
-		strings.write_string(builder, ")")
-		if n.results != nil {
-			strings.write_string(builder, " -> ")
-			build_string(n.results, builder, remove_pointers)
-		}
+		build_string_proc_type(n, builder, remove_pointers)
 	case ^ast.Pointer_Type:
 		build_string(n.tag, builder, remove_pointers)
 		if !remove_pointers {

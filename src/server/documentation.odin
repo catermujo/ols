@@ -484,7 +484,11 @@ write_procedure_symbol_signature :: proc(sb: ^strings.Builder, value: SymbolProc
 			strings.write_string(sb, "#force_no_inline ")
 		}
 	}
-	strings.write_string(sb, "proc")
+	if value.is_lambda {
+		strings.write_string(sb, "lambda")
+	} else {
+		strings.write_string(sb, "proc")
+	}
 	if s, ok := value.calling_convention.(string); ok && detailed_signature {
 		fmt.sbprintf(sb, " %s ", s)
 	} else if len(value.attributes) > 0 {

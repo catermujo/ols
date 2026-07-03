@@ -421,6 +421,8 @@ visit_proc_type :: proc(node: ^ast.Proc_Type, builder: ^SemanticTokenBuilder) {
 		return
 	}
 
+	visit_nodes(node.captures, builder)
+
 	if node.params != nil {
 		for param in node.params.list {
 			for name in param.names {

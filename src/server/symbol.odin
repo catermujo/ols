@@ -75,6 +75,7 @@ SymbolProcedureValue :: struct {
 	orig_arg_types:     []^ast.Field, //When generics have overloaded the types, we store the original version here.
 	generic:            bool,
 	diverging:          bool,
+	is_lambda:          bool,
 	calling_convention: ast.Proc_Calling_Convention,
 	tags:               ast.Proc_Tags,
 	attributes:         []^ast.Attribute,
@@ -928,6 +929,7 @@ symbol_to_expr :: proc(symbol: Symbol, file: string, allocator := context.temp_a
 		type.results.list = v.return_types
 		type.params = new_type(ast.Field_List, pos, end, allocator)
 		type.params.list = v.arg_types
+		type.is_lambda = v.is_lambda
 		return type
 	case SymbolBitFieldValue:
 		type := new_type(ast.Bit_Field_Type, pos, end, allocator)

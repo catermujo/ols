@@ -124,6 +124,7 @@ collect_procedure_fields :: proc(
 		orig_arg_types     = args[:],
 		generic            = is_procedure_generic(proc_type),
 		diverging          = proc_type.diverging,
+		is_lambda          = proc_type.is_lambda,
 		calling_convention = clone_calling_convention(
 			proc_type.calling_convention,
 			collection.allocator,
@@ -1263,6 +1264,7 @@ replace_package_alias_node :: proc(node: ^ast.Node, package_map: map[string]stri
 	case ^ast.Distinct_Type:
 		replace_package_alias(n.type, package_map, collection)
 	case ^ast.Proc_Type:
+		replace_package_alias(n.captures, package_map, collection)
 		replace_package_alias(n.params, package_map, collection)
 		replace_package_alias(n.results, package_map, collection)
 	case ^ast.Pointer_Type:

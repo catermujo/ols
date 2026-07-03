@@ -54,12 +54,45 @@ ast_hover_default_parameter_enum :: proc(t: ^testing.T) {
 		packages = {},
 	}
 
-	test.expect_hover(
+test.expect_hover(
 		t,
 		&source,
 		"test.procedure :: proc(called_from: Expr_Called_Type = .None, options := List_Options{})",
 	)
 }
+
+@(test)
+ast_hover_lambda_body_capture_use :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+
+		main :: proc() {
+			factor := 2
+			scale := lambda [factor](n: int) -> int { return n * fac{*}tor }
+			_ = scale
+		}
+		`,
+	}
+
+	test.expect_hover(t, &source, "test.factor: int")
+}
+
+@(test)
+ast_hover_lambda_variable_type :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+
+		main :: proc() {
+			factor := 2
+			scale := lambda [factor](n: int) -> int { return n * factor }
+			sca{*}le
+		}
+		`,
+	}
+
+	test.expect_hover(t, &source, "test.scale: lambda(n: int) -> int")
+}
+
 @(test)
 ast_hover_parameter :: proc(t: ^testing.T) {
 	source := test.Source {

@@ -633,6 +633,7 @@ get_document_position_node :: proc(node: ^ast.Node, position_context: ^DocumentP
 			get_document_position(n.body, position_context)
 		} else if position_in_node(n.type, position_context.position) {
 			position_context.function = cast(^ast.Proc_Lit)node
+			append(&position_context.functions, position_context.function)
 			get_document_position(n.type, position_context)
 		} else {
 			for clause in n.where_clauses {
@@ -858,6 +859,7 @@ get_document_position_node :: proc(node: ^ast.Node, position_context: ^DocumentP
 		get_document_position(n.type, position_context)
 		get_document_position(n.specialization, position_context)
 	case ^ast.Proc_Type:
+		get_document_position(n.captures, position_context)
 		get_document_position(n.params, position_context)
 		get_document_position(n.results, position_context)
 	case ^ast.Pointer_Type:

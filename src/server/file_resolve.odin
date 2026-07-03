@@ -623,6 +623,7 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 		resolve_node(n.type, data)
 		resolve_node(n.specialization, data)
 	case ^ast.Proc_Type:
+		resolve_nodes(n.captures, data)
 		resolve_node(n.params, data)
 		resolve_node(n.results, data)
 	case ^ast.Pointer_Type:
