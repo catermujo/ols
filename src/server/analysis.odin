@@ -459,6 +459,102 @@ is_valid_nil_symbol :: proc(symbol: Symbol) -> bool {
 	return false
 }
 
+get_field_list_entry_count :: proc(fields: []^ast.Field) -> int {
+	total := 0
+	for field in fields {
+		if len(field.names) == 0 {
+			total += 1
+		} else {
+			total += len(field.names)
+		}
+	}
+	return total
+}
+
+get_field_list_entry_type_at_index :: proc(fields: []^ast.Field, index: int) -> (^ast.Expr, bool) {
+	count := 0
+	for field in fields {
+		width := len(field.names)
+		if width == 0 {
+			width = 1
+		}
+
+		count += width
+		if index < count {
+			return get_field_type_expr(field)
+		}
+	}
+
+	return nil, false
+}
+
+are_field_lists_same_typed :: proc(
+	ast_context: ^AstContext,
+	a_symbol, b_symbol: Symbol,
+	a_fields, b_fields: []^ast.Field,
+) -> bool {
+	count := get_field_list_entry_count(a_fields)
+	if count != get_field_list_entry_count(b_fields) {
+		return false
+	}
+
+	for i in 0 ..< count {
+		a_expr, a_expr_ok := get_field_list_entry_type_at_index(a_fields, i)
+		if !a_expr_ok {
+			return false
+		}
+
+		b_expr, b_expr_ok := get_field_list_entry_type_at_index(b_fields, i)
+		if !b_expr_ok {
+			return false
+		}
+
+		a_is_variadic := false
+		if _, ok := a_expr.derived.(^ast.Ellipsis); ok {
+			a_is_variadic = true
+		}
+
+		b_is_variadic := false
+		if _, ok := b_expr.derived.(^ast.Ellipsis); ok {
+			b_is_variadic = true
+		}
+
+		if a_is_variadic != b_is_variadic {
+			return false
+		}
+
+		set_ast_package_from_symbol_scoped(ast_context, a_symbol)
+		a_type, a_type_ok := resolve_type_expression(ast_context, a_expr)
+		if !a_type_ok {
+			return false
+		}
+
+		set_ast_package_from_symbol_scoped(ast_context, b_symbol)
+		b_type, b_type_ok := resolve_type_expression(ast_context, b_expr)
+		if !b_type_ok {
+			return false
+		}
+
+		if !is_symbol_same_typed(ast_context, a_type, b_type) {
+			return false
+		}
+	}
+
+	return true
+}
+
+are_procedures_same_typed :: proc(
+	ast_context: ^AstContext,
+	a_symbol, b_symbol: Symbol,
+	a, b: SymbolProcedureValue,
+) -> bool {
+	if !are_field_lists_same_typed(ast_context, a_symbol, b_symbol, a.arg_types, b.arg_types) {
+		return false
+	}
+
+	return are_field_lists_same_typed(ast_context, a_symbol, b_symbol, a.return_types, b.return_types)
+}
+
 is_symbol_same_typed :: proc(ast_context: ^AstContext, a, b: Symbol, flags: ast.Field_Flags = {}) -> bool {
 	// In order to correctly equate the symbols for overloaded functions, we need to check both directions
 	if same, ok := are_symbol_untyped_basic_same_typed(a, b); ok {
@@ -508,6 +604,9 @@ is_symbol_same_typed :: proc(ast_context: ^AstContext, a, b: Symbol, flags: ast.
 		return a_value.ident.name == b_value.ident.name && a.pkg == b.pkg
 	case SymbolStructValue, SymbolEnumValue, SymbolUnionValue, SymbolBitSetValue, SymbolBitFieldValue:
 		return a.name == b.name && a.pkg == b.pkg
+	case SymbolProcedureValue:
+		b_value := b.value.(SymbolProcedureValue)
+		return are_procedures_same_typed(ast_context, a, b, a_value, b_value)
 	case SymbolSliceValue:
 		b_value := b.value.(SymbolSliceValue)
 

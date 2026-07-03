@@ -715,12 +715,26 @@ is_procedure_generic :: proc(proc_type: ^ast.Proc_Type) -> bool {
 	}
 
 	for param in proc_type.params.list {
+		for name in param.names {
+			if _, ok := name.derived.(^ast.Poly_Type); ok {
+				return true
+			}
+		}
+
 		if param.type == nil {
 			continue
 		}
 
 		if expr_contains_poly(param.type) {
 			return true
+		}
+	}
+
+	if proc_type.results != nil {
+		for result in proc_type.results.list {
+			if result.type != nil && expr_contains_poly(result.type) {
+				return true
+			}
 		}
 	}
 
