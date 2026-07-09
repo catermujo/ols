@@ -626,7 +626,11 @@ get_document_position_node :: proc(node: ^ast.Node, position_context: ^DocumentP
 	case ^ast.Ellipsis:
 		get_document_position(n.expr, position_context)
 	case ^ast.Proc_Lit:
-		if position_in_node(n.body, position_context.position) {
+		if position_in_node(n.scope_exit_contract, position_context.position) {
+			position_context.function = cast(^ast.Proc_Lit)node
+			append(&position_context.functions, position_context.function)
+			get_document_position(n.scope_exit_contract, position_context)
+		} else if position_in_node(n.body, position_context.position) {
 			get_document_position(n.type, position_context)
 			position_context.function = cast(^ast.Proc_Lit)node
 			append(&position_context.functions, position_context.function)
@@ -643,6 +647,9 @@ get_document_position_node :: proc(node: ^ast.Node, position_context: ^DocumentP
 				}
 			}
 		}
+	case ^ast.Scope_Exit:
+		get_document_position(n.policy, position_context)
+		get_document_position(n.cleanup, position_context)
 	case ^ast.Comp_Lit:
 		//only set this for the parent comp literal, since we will need to walk through it to infer types.
 		if position_context.parent_comp_lit == nil {

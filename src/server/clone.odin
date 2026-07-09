@@ -271,6 +271,14 @@ clone_node :: proc(node: ^ast.Node, allocator: mem.Allocator, unique_strings: ^m
 		r.type = cast(^ast.Proc_Type)clone_type(cast(^ast.Node)r.type, allocator, unique_strings)
 		r.body = nil
 		r.where_clauses = clone_type(r.where_clauses, allocator, unique_strings)
+		r.scope_exit_contract = cast(^ast.Scope_Exit)clone_type(
+			cast(^ast.Node)r.scope_exit_contract,
+			allocator,
+			unique_strings,
+		)
+	case ^ast.Scope_Exit:
+		r.policy = clone_type(r.policy, allocator, unique_strings)
+		r.cleanup = clone_type(r.cleanup, allocator, unique_strings)
 	case ^ast.Helper_Type:
 		r.type = clone_type(r.type, allocator, unique_strings)
 	case ^ast.Type_Cast:

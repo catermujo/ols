@@ -537,6 +537,10 @@ write_procedure_symbol_signature :: proc(sb: ^strings.Builder, value: SymbolProc
 			fmt.sbprintf(sb, " %s", s)
 		}
 	}
+	if value.scope_exit_contract != nil {
+		strings.write_string(sb, " ")
+		build_string_node(value.scope_exit_contract, sb, false)
+	}
 }
 
 write_where_clauses :: proc(sb: ^strings.Builder, where_clauses: []^ast.Expr) {
@@ -749,7 +753,7 @@ write_node :: proc(
 		symbol = make_symbol_bit_field_from_ast(ast_context, n, name, true)
 		ok = true
 	case ^ast.Proc_Type:
-		symbol = make_symbol_procedure_from_ast(ast_context, nil, n^, name, {}, true, .None, nil)
+		symbol = make_symbol_procedure_from_ast(ast_context, nil, n^, name, {}, true, .None, nil, nil)
 		ok = true
 	case ^ast.Comp_Lit:
 		max_elems :: 16

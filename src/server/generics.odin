@@ -712,6 +712,7 @@ resolve_generic_function_symbol :: proc(
 		attributes         = proc_value.attributes,
 		inlining           = inlining,
 		where_clauses      = proc_value.where_clauses,
+		scope_exit_contract = proc_value.scope_exit_contract,
 	}
 
 	return symbol, true

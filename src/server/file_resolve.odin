@@ -437,13 +437,18 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 
 		resolve_node(n.type, data)
 
+		append(&data.position_context.functions, data.position_context.function)
+
 		for clause in n.where_clauses {
 			resolve_node(clause, data)
 		}
 
-		append(&data.position_context.functions, data.position_context.function)
+		resolve_node(n.scope_exit_contract, data)
 
 		resolve_node(n.body, data)
+	case ^ast.Scope_Exit:
+		resolve_node(n.policy, data)
+		resolve_node(n.cleanup, data)
 	case ^ast.Unroll_Range_Stmt:
 		local_scope(data, n)
 		resolve_node(n.val0, data)

@@ -1745,6 +1745,7 @@ visit_expr :: proc(
 		document = group(document)
 
 		document = cons(document, visit_proc_tags(p, v.tags))
+		document = cons(document, visit_scope_exit_contract(p, v.scope_exit_contract))
 
 		if v.body != nil {
 			set_source_position(p, v.body.pos)
@@ -1752,6 +1753,8 @@ visit_expr :: proc(
 		} else {
 			document = cons_with_nopl(document, text("---"))
 		}
+	case ^ast.Scope_Exit:
+		document = visit_scope_exit_contract(p, v)
 	case ^ast.Proc_Type:
 		document = group(visit_proc_type(p, v^, false, false))
 	case ^ast.Basic_Lit:
@@ -2237,6 +2240,30 @@ visit_proc_tags :: proc(p: ^Printer, proc_tags: ast.Proc_Tags) -> ^Document {
 	if .Optional_Ok in proc_tags do document = append_proc_tag(document, "#optional_ok")
 	if .Optional_Allocator_Error in proc_tags do document = append_proc_tag(document, "#optional_allocator_error")
 
+	return group(document)
+}
+
+@(private)
+visit_scope_exit_contract :: proc(p: ^Printer, contract: ^ast.Scope_Exit) -> ^Document {
+	if contract == nil {
+		return empty()
+	}
+
+	document := cons(if_break(" \\"), break_with_space(), text("#scope_exit"), text("("))
+	document = cons(
+		document,
+		nest(
+			cons(
+				break_with(""),
+				group(visit_expr(p, contract.policy)),
+				text(","),
+				break_with_space(),
+				group(visit_expr(p, contract.cleanup)),
+			),
+		),
+		break_with(""),
+		text(")"),
+	)
 	return group(document)
 }
 

@@ -756,6 +756,10 @@ free_ast_node :: proc(node: ^ast.Node, allocator: mem.Allocator) {
 		free_ast(n.type, allocator)
 		free_ast(n.body, allocator)
 		free_ast(n.where_clauses, allocator)
+		free_ast(n.scope_exit_contract, allocator)
+	case ^ast.Scope_Exit:
+		free_ast(n.policy, allocator)
+		free_ast(n.cleanup, allocator)
 	case ^ast.Comp_Lit:
 		free_ast(n.type, allocator)
 		free_ast(n.elems, allocator)
@@ -1182,6 +1186,23 @@ node_equal_node :: proc(a, b: ^ast.Node) -> bool {
 			ret &= node_equal(n.args, m.args)
 			return ret
 		}
+	case ^ast.Proc_Lit:
+		if n, ok := a.derived.(^ast.Proc_Lit); ok {
+			ret := node_equal(n.type, m.type)
+			ret &= node_equal(n.where_clauses, m.where_clauses)
+			if n.scope_exit_contract == nil || m.scope_exit_contract == nil {
+				ret &= n.scope_exit_contract == nil && m.scope_exit_contract == nil
+			} else {
+				ret &= node_equal(n.scope_exit_contract, m.scope_exit_contract)
+			}
+			return ret
+		}
+	case ^ast.Scope_Exit:
+		if n, ok := a.derived.(^ast.Scope_Exit); ok {
+			ret := node_equal(n.policy, m.policy)
+			ret &= node_equal(n.cleanup, m.cleanup)
+			return ret
+		}
 	case ^ast.Bit_Field_Type:
 		if n, ok := a.derived.(^ast.Bit_Field_Type); ok {
 			if len(n.fields) != len(m.fields) do return false
@@ -1247,6 +1268,20 @@ build_string_lambda_captures :: proc(captures: []^ast.Expr, builder: ^strings.Bu
 	strings.write_string(builder, "]")
 }
 
+build_string_where_clauses :: proc(where_clauses: []^ast.Expr, builder: ^strings.Builder, remove_pointers: bool) {
+	if len(where_clauses) == 0 {
+		return
+	}
+
+	strings.write_string(builder, " where ")
+	for clause, i in where_clauses {
+		build_string(clause, builder, remove_pointers)
+		if len(where_clauses)-1 != i {
+			strings.write_string(builder, ", ")
+		}
+	}
+}
+
 build_string_proc_type :: proc(
 	proc_type: ^ast.Proc_Type,
 	builder: ^strings.Builder,
@@ -1309,7 +1344,18 @@ build_string_node :: proc(node: ^ast.Node, builder: ^strings.Builder, remove_poi
 		build_string(n.expr, builder, remove_pointers)
 	case ^ast.Proc_Lit:
 		build_string_proc_type(n.type, builder, remove_pointers, true)
+		build_string_where_clauses(n.where_clauses, builder, remove_pointers)
+		if n.scope_exit_contract != nil {
+			strings.write_string(builder, " ")
+			build_string(n.scope_exit_contract, builder, remove_pointers)
+		}
 		build_string(n.body, builder, remove_pointers)
+	case ^ast.Scope_Exit:
+		strings.write_string(builder, "#scope_exit(")
+		build_string(n.policy, builder, remove_pointers)
+		strings.write_string(builder, ", ")
+		build_string(n.cleanup, builder, remove_pointers)
+		strings.write_string(builder, ")")
 	case ^ast.Comp_Lit:
 		build_string(n.type, builder, remove_pointers)
 		strings.write_string(builder, "{")
