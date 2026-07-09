@@ -94,6 +94,44 @@ ast_hover_lambda_variable_type :: proc(t: ^testing.T) {
 }
 
 @(test)
+ast_hover_scope_exit_proc_signature :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+
+		cleanup :: proc(value: int) {}
+
+		scope :: proc(value: int) -> (result: int) #scope_exit(.explicit, cleanup(result)) {
+			return value
+		}
+
+		sco{*}pe
+		`,
+	}
+
+	test.expect_hover(
+		t,
+		&source,
+		"test.scope :: proc(value: int) -> (result: int) #scope_exit(.explicit, cleanup(result))",
+	)
+}
+
+@(test)
+ast_hover_scope_exit_result_name :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+
+		cleanup :: proc(value: int) {}
+
+		scope :: proc(value: int) -> (result: int) #scope_exit(.explicit, cleanup(res{*}ult)) {
+			return value
+		}
+		`,
+	}
+
+	test.expect_hover(t, &source, "test.result: int")
+}
+
+@(test)
 ast_hover_parameter :: proc(t: ^testing.T) {
 	source := test.Source {
 		main     = `package test

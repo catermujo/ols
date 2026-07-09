@@ -81,6 +81,7 @@ SymbolProcedureValue :: struct {
 	attributes:         []^ast.Attribute,
 	inlining:           ast.Proc_Inlining,
 	where_clauses:      []^ast.Expr,
+	scope_exit_contract: ^ast.Scope_Exit,
 }
 
 SymbolProcedureGroupValue :: struct {
@@ -724,6 +725,17 @@ new_clone_symbol :: proc(data: Symbol, allocator := context.allocator) -> ^Symbo
 	return new_symbol
 }
 
+same_field_slice_storage :: proc(a, b: []^ast.Field) -> bool {
+	return len(a) > 0 && len(b) > 0 && &a[0] == &b[0]
+}
+
+free_ast_expr_map :: proc(values: map[int]^ast.Expr, allocator: mem.Allocator) {
+	for _, expr in values {
+		free_ast(expr, allocator)
+	}
+	delete(values)
+}
+
 free_symbol :: proc(symbol: Symbol, allocator: mem.Allocator) {
 	if symbol.signature != "" &&
 	   symbol.signature != "struct" &&
@@ -738,6 +750,13 @@ free_symbol :: proc(symbol: Symbol, allocator: mem.Allocator) {
 		delete(symbol.doc, allocator)
 	}
 
+	if symbol.comment != "" {
+		delete(symbol.comment, allocator)
+	}
+
+	free_ast(symbol.type_expr, allocator)
+	free_ast(symbol.value_expr, allocator)
+
 	switch v in symbol.value {
 	case SymbolMatrixValue:
 		free_ast(v.expr, allocator)
@@ -748,24 +767,58 @@ free_symbol :: proc(symbol: Symbol, allocator: mem.Allocator) {
 	case SymbolProcedureValue:
 		free_ast(v.return_types, allocator)
 		free_ast(v.arg_types, allocator)
+		if !same_field_slice_storage(v.orig_return_types, v.return_types) {
+			free_ast(v.orig_return_types, allocator)
+		}
+		if !same_field_slice_storage(v.orig_arg_types, v.arg_types) {
+			free_ast(v.orig_arg_types, allocator)
+		}
+		free_ast(v.attributes, allocator)
+		free_ast(v.where_clauses, allocator)
+		free_ast(v.scope_exit_contract, allocator)
 	case SymbolStructValue:
 		delete(v.names, allocator)
 		delete(v.ranges, allocator)
+		delete(v.usings, allocator)
+		delete(v.from_usings, allocator)
+		delete(v.unexpanded_usings, allocator)
 		free_ast(v.types, allocator)
+		free_ast(v.args, allocator)
+		free_ast(v.docs, allocator)
+		free_ast(v.comments, allocator)
+		free_ast(v.poly, allocator)
+		free_ast(v.align, allocator)
+		free_ast(v.min_field_align, allocator)
+		free_ast(v.max_field_align, allocator)
+		free_ast(v.where_clauses, allocator)
+		free_ast_expr_map(v.backing_types, allocator)
+		free_ast_expr_map(v.bit_sizes, allocator)
 	case SymbolGenericValue:
 		free_ast(v.expr, allocator)
+		delete(v.field_names, allocator)
+		delete(v.ranges, allocator)
 	case SymbolProcedureGroupValue:
 		free_ast(v.group, allocator)
 	case SymbolEnumValue:
 		delete(v.names, allocator)
 		delete(v.ranges, allocator)
+		free_ast(v.values, allocator)
+		free_ast(v.base_type, allocator)
+		free_ast(v.docs, allocator)
+		free_ast(v.comments, allocator)
 	case SymbolUnionValue:
 		free_ast(v.types, allocator)
+		free_ast(v.poly, allocator)
+		free_ast(v.docs, allocator)
+		free_ast(v.comments, allocator)
+		free_ast(v.align, allocator)
+		free_ast(v.where_clauses, allocator)
 	case SymbolBitSetValue:
 		free_ast(v.expr, allocator)
 		free_ast(v.underlying, allocator)
 	case SymbolDynamicArrayValue:
 		free_ast(v.expr, allocator)
+		free_ast(v.cap, allocator)
 	case SymbolFixedArrayValue:
 		free_ast(v.expr, allocator)
 		free_ast(v.len, allocator)
@@ -779,6 +832,7 @@ free_symbol :: proc(symbol: Symbol, allocator: mem.Allocator) {
 		for symbol in v.symbols {
 			free_symbol(symbol, allocator)
 		}
+		delete(v.symbols, allocator)
 	case SymbolMapValue:
 		free_ast(v.key, allocator)
 		free_ast(v.value, allocator)
@@ -789,6 +843,10 @@ free_symbol :: proc(symbol: Symbol, allocator: mem.Allocator) {
 		delete(v.names, allocator)
 		delete(v.ranges, allocator)
 		free_ast(v.types, allocator)
+		free_ast(v.backing_type, allocator)
+		free_ast(v.docs, allocator)
+		free_ast(v.comments, allocator)
+		free_ast(v.bit_sizes, allocator)
 	}
 }
 
