@@ -2264,21 +2264,17 @@ visit_scope_exit_contract :: proc(p: ^Printer, contract: ^ast.Scope_Exit) -> ^Do
 		return empty()
 	}
 
-	document := cons(if_break(" \\"), break_with_space(), text("#scope_exit"), text("("))
-	document = cons(
-		document,
-		nest(
-			cons(
-				break_with(""),
-				group(visit_expr(p, contract.policy)),
-				text(","),
-				break_with_space(),
-				group(visit_expr(p, contract.cleanup)),
-			),
-		),
-		break_with(""),
+	document := cons(
+		text("#scope_exit"),
+		text("("),
+		visit_expr(p, contract.policy),
+		text(","),
+		break_with_space(),
+		visit_expr(p, contract.cleanup),
 		text(")"),
 	)
+
+	document = cons(if_break(" \\"), break_with_space(), enforce_fit(document))
 	return group(document)
 }
 
