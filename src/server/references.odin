@@ -986,6 +986,7 @@ collect_alias_definition_reference_locations :: proc(
 	search_symbol: Symbol,
 	config: ^common.Config,
 	allocator := context.allocator,
+	include_target := true,
 ) -> []common.Location {
 	locations := make([dynamic]common.Location, 0, allocator)
 
@@ -1038,6 +1039,10 @@ collect_alias_definition_reference_locations :: proc(
 			},
 			allocator,
 		)
+
+		if !include_target {
+			continue
+		}
 
 		range, range_ok := alias_definition_target_reference_range(global.expr, document.ast.src)
 		if !range_ok {
@@ -1165,6 +1170,7 @@ resolve_references :: proc(
 	config: ^common.Config,
 	current_file_only := false,
 	include_declaration := true,
+	skip_alias_definition_targets := true,
 ) -> (
 	[]common.Location,
 	bool,
@@ -1189,6 +1195,7 @@ resolve_references :: proc(
 		search_symbol,
 		config,
 		ast_context.allocator,
+		include_target = skip_alias_definition_targets,
 	)
 
 	target_name := get_target_name(position_context, resolve_flag)
@@ -1377,6 +1384,7 @@ resolve_references :: proc(
 			search_symbol,
 			config,
 			context.allocator,
+			include_target = skip_alias_definition_targets,
 		)
 
 		in_pkg := false

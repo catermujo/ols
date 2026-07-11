@@ -319,7 +319,12 @@ is_skip_alias_candidate :: proc(ast_context: ^AstContext, symbol: Symbol) -> boo
 		return false
 	}
 	#partial switch v in global.expr.derived {
-	case ^ast.Ident, ^ast.Selector_Expr:
+	case ^ast.Ident:
+		if _, ok := keyword_map[v.name]; ok {
+			return false
+		}
+		return true
+	case ^ast.Selector_Expr:
 		return true
 	}
 	return false
