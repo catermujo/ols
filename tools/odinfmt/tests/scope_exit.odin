@@ -1,5 +1,7 @@
 package odinfmt_test
 
+import "core:fmt"
+
 c :: proc(v: int) {}
 
 scope_exit_formatting :: proc() {
@@ -8,4 +10,13 @@ scope_exit_formatting :: proc() {
 	}
 
 	_ = g
+}
+
+with_formatting :: proc() {
+	with value := 1;
+		fmt.println(value) {
+			with fmt.tprint("nested") {
+				fmt.println(value)
+			}
+		}
 }

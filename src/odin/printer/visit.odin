@@ -1287,6 +1287,21 @@ visit_stmt :: proc(
 	case ^ast.Defer_Stmt:
 		document = cons(document, text("defer"))
 		document = cons_with_nopl(document, visit_stmt(p, v.stmt))
+	case ^ast.With_Stmt:
+		if v.label != nil {
+			document = cons(document, visit_expr(p, v.label), text(":"), break_with_space())
+		}
+
+		document = cons(document, text("with"))
+		if v.init != nil {
+			document = cons_with_opl(document, visit_stmt(p, v.init))
+			document = cons(document, text(";"))
+		}
+
+		document = cons_with_opl(document, visit_stmt(p, v.opener))
+		set_source_position(p, v.body.pos)
+		document = cons_with_nopl(document, visit_stmt(p, v.body))
+		set_source_position(p, v.body.end)
 	case ^ast.When_Stmt:
 		document = cons(document, cons_with_nopl(text("when"), visit_expr(p, v.cond)))
 
