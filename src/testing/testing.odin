@@ -661,6 +661,18 @@ expect_prepare_rename_range :: proc(t: ^testing.T, src: ^Source, expect_range: c
 	}
 }
 
+expect_prepare_rename_unavailable :: proc(t: ^testing.T, src: ^Source) {
+	cursor := source_remove_cursor(src)
+
+	setup(src)
+	defer teardown(src)
+
+	_, ok := server.get_prepare_rename(src.document, cursor)
+	if ok {
+		log.error("Expected prepare rename to be unavailable")
+	}
+}
+
 expect_rename_locations :: proc(
 	t: ^testing.T,
 	src: ^Source,
