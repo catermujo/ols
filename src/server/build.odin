@@ -298,6 +298,81 @@ try_build_package :: proc(pkg_name: string) {
 	progress_end(progress_token, fmt.tprintf("Indexed %s", pkg_name))
 }
 
+remove_package_file_doc_comment :: proc(pkg: ^SymbolPackage, uri: string, allocator: mem.Allocator) {
+	doc_key := ""
+	doc_value := ""
+	comment_key := ""
+	comment_value := ""
+
+	for key, value in pkg.doc {
+		if strings.equal_fold(key, uri) {
+			doc_key = key
+			doc_value = value
+			break
+		}
+	}
+
+	for key, value in pkg.comment {
+		if strings.equal_fold(key, uri) {
+			comment_key = key
+			comment_value = value
+			break
+		}
+	}
+
+	if doc_value != "" {
+		delete(doc_value, allocator)
+	}
+	if comment_value != "" {
+		delete(comment_value, allocator)
+	}
+
+	if doc_key != "" {
+		delete_key(&pkg.doc, doc_key)
+	}
+	if comment_key != "" {
+		delete_key(&pkg.comment, comment_key)
+	}
+
+	if doc_key != "" {
+		delete(doc_key, allocator)
+	}
+	if comment_key != "" && (doc_key == "" || raw_data(comment_key) != raw_data(doc_key)) {
+		delete(comment_key, allocator)
+	}
+}
+
+remove_indexed_file_data :: proc(corrected_uri: string) {
+	for _, &pkg in indexer.index.collection.packages {
+		for symbol_name, symbol in pkg.symbols {
+			if !strings.equal_fold(corrected_uri, symbol.uri) {
+				continue
+			}
+
+			free_symbol(symbol, indexer.index.collection.allocator)
+			delete_key(&pkg.symbols, symbol_name)
+		}
+
+		for method, &symbols in pkg.methods {
+			for i := len(symbols) - 1; i >= 0; i -= 1 {
+				#no_bounds_check symbol := symbols[i]
+				if strings.equal_fold(corrected_uri, symbol.uri) {
+					unordered_remove(&symbols, i)
+				}
+			}
+
+			if len(symbols) == 0 {
+				delete(symbols)
+				delete_key(&pkg.methods, method)
+			} else {
+				pkg.methods[method] = symbols
+			}
+		}
+
+		remove_package_file_doc_comment(&pkg, corrected_uri, indexer.index.collection.allocator)
+	}
+}
+
 
 remove_index_file :: proc(uri: common.Uri) -> common.Error {
 	ok: bool
@@ -311,25 +386,7 @@ remove_index_file :: proc(uri: common.Uri) -> common.Error {
 
 	corrected_uri := common.create_uri(fullpath, context.temp_allocator)
 
-	for k, &v in indexer.index.collection.packages {
-		for k2, v2 in v.symbols {
-			if strings.equal_fold(corrected_uri.uri, v2.uri) {
-				free_symbol(v2, indexer.index.collection.allocator)
-				delete_key(&v.symbols, k2)
-			}
-		}
-
-		for method, &symbols in v.methods {
-			for i := len(symbols) - 1; i >= 0; i -= 1 {
-				#no_bounds_check symbol := symbols[i]
-				if strings.equal_fold(corrected_uri.uri, symbol.uri) {
-					unordered_remove(&symbols, i)
-				}
-			}
-		}
-		delete_key(&v.doc, corrected_uri.uri)
-		delete_key(&v.comment, corrected_uri.uri)
-	}
+	remove_indexed_file_data(corrected_uri.uri)
 
 	clear_all_file_resolve_cache()
 	reference_import_cache_remove_file(fullpath)
@@ -392,23 +449,7 @@ index_file :: proc(uri: common.Uri, text: string) -> common.Error {
 		}
 	}
 
-	for k, &v in indexer.index.collection.packages {
-		for k2, v2 in v.symbols {
-			if corrected_uri.uri == v2.uri {
-				free_symbol(v2, indexer.index.collection.allocator)
-				delete_key(&v.symbols, k2)
-			}
-		}
-
-		for method, &symbols in v.methods {
-			for i := len(symbols) - 1; i >= 0; i -= 1 {
-				#no_bounds_check symbol := symbols[i]
-				if corrected_uri.uri == symbol.uri {
-					unordered_remove(&symbols, i)
-				}
-			}
-		}
-	}
+	remove_indexed_file_data(corrected_uri.uri)
 
 	if is_ignored {
 		clear_all_file_resolve_cache()
