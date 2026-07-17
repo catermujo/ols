@@ -1596,3 +1596,26 @@ ast_goto_enum_field_value_reference :: proc(t: ^testing.T) {
 
 	test.expect_definition_locations(t, &source, {location})
 }
+
+@(test)
+ast_goto_identifier_inside_with :: proc(t: ^testing.T) {
+	source := test.Source{
+		main = `package test
+cleanup :: proc() {}
+scoped :: proc() #scope_exit(.implicit, cleanup()) {}
+target :: proc() {}
+main :: proc() {
+	with local := target; scoped() {
+		local()
+		tar{*}get()
+	}
+}
+`,
+	}
+
+	location := common.Location{
+		range = {start = {line = 3, character = 0}, end = {line = 3, character = 6}},
+	}
+
+	test.expect_definition_locations(t, &source, {location})
+}

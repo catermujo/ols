@@ -778,6 +778,11 @@ get_document_position_node :: proc(node: ^ast.Node, position_context: ^DocumentP
 		get_document_position(n.results, position_context)
 	case ^ast.Defer_Stmt:
 		get_document_position(n.stmt, position_context)
+	case ^ast.With_Stmt:
+		get_document_position_label(n.label, position_context)
+		get_document_position(n.init, position_context)
+		get_document_position(n.opener, position_context)
+		get_document_position(n.body, position_context)
 	case ^ast.For_Stmt:
 		get_document_position_label(n.label, position_context)
 		get_document_position(n.init, position_context)
