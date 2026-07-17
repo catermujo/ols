@@ -553,6 +553,10 @@ get_locals_stmt :: proc(
 		get_locals_case_clause(file, v, ast_context, document_position)
 	case ^ast.Defer_Stmt:
 		get_locals_stmt(file, v.stmt, ast_context, document_position)
+	case ^ast.With_Stmt:
+		get_locals_stmt(file, v.init, ast_context, document_position)
+		get_locals_stmt(file, v.opener, ast_context, document_position)
+		get_locals_stmt(file, v.body, ast_context, document_position)
 	case:
 	//log.debugf("default node local stmt %v", v);
 	}

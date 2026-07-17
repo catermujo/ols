@@ -2216,3 +2216,28 @@ ast_reference_enum_field_value_reference  :: proc(t: ^testing.T) {
 
 	test.expect_reference_locations(t, &source, locations)
 }
+
+@(test)
+ast_references_identifier_inside_with :: proc(t: ^testing.T) {
+	source := test.Source{
+		main = `package test
+cleanup :: proc() {}
+scoped :: proc() #scope_exit(.implicit, cleanup()) {}
+target :: proc() {}
+main :: proc() {
+	target()
+	with scoped() {
+		tar{*}get()
+	}
+}
+`,
+	}
+
+	locations := []common.Location{
+		{range = {start = {line = 3, character = 0}, end = {line = 3, character = 6}}},
+		{range = {start = {line = 5, character = 1}, end = {line = 5, character = 7}}},
+		{range = {start = {line = 7, character = 2}, end = {line = 7, character = 8}}},
+	}
+
+	test.expect_reference_locations(t, &source, locations)
+}

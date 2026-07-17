@@ -597,6 +597,12 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 		resolve_nodes(n.results, data)
 	case ^ast.Defer_Stmt:
 		resolve_node(n.stmt, data)
+	case ^ast.With_Stmt:
+		local_scope(data, n)
+		resolve_node(n.label, data)
+		resolve_node(n.init, data)
+		resolve_node(n.opener, data)
+		resolve_node(n.body, data)
 	case ^ast.Case_Clause:
 		local_scope(data, n)
 		resolve_nodes(n.list, data)
