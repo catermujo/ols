@@ -1290,6 +1290,8 @@ resolve_references :: proc(
 	_ = runtime.arena_init(&arena, mem.Megabyte * 40, runtime.default_allocator())
 
 	defer runtime.arena_destroy(&arena)
+	old_allocator := context.allocator
+	defer context.allocator = old_allocator
 
 	context.allocator = runtime.arena_allocator(&arena)
 

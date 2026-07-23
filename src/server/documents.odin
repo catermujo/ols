@@ -1,5 +1,6 @@
 package server
 
+import "base:runtime"
 import "base:intrinsics"
 import "core:os"
 
@@ -60,8 +61,11 @@ document_storage: DocumentStorage
 
 document_storage_shutdown :: proc() {
 	for k, v in document_storage.documents {
-		virtual.arena_destroy(v.allocator)
-		free(v.allocator)
+		delete(v.text, runtime.heap_allocator())
+		if v.allocator != nil {
+			virtual.arena_destroy(v.allocator)
+			free(v.allocator)
+		}
 		delete(k)
 	}
 
@@ -134,7 +138,8 @@ document_open :: proc(uri_string: string, text: string, config: ^common.Config, 
 
 		document.uri = uri
 		document.client_owned = true
-		document.text = transmute([]u8)text
+		document.text = make([]u8, len(text), runtime.heap_allocator())
+		copy(document.text, transmute([]u8)text)
 		document.used_text = len(document.text)
 		document.last_saved_check_fingerprint = 0
 		document.last_saved_check_fingerprint_set = false
@@ -148,11 +153,12 @@ document_open :: proc(uri_string: string, text: string, config: ^common.Config, 
 	} else {
 		document := Document {
 			uri          = uri,
-			text         = transmute([]u8)text,
+			text         = make([]u8, len(text), runtime.heap_allocator()),
 			client_owned = true,
 			used_text    = len(text),
 			allocator    = document_get_allocator(),
 		}
+		copy(document.text, transmute([]u8)text)
 
 		document_setup(&document)
 
@@ -246,14 +252,14 @@ document_apply_changes :: proc(
 
 			//Reduce the amount of allocation by allocating more memory than needed
 			if document.used_text > len(document.text) {
-				new_text := make([]u8, document.used_text * 2)
+				new_text := make([]u8, document.used_text * 2, runtime.heap_allocator())
 
 				//join the 3 splices into the text
 				copy(new_text, lower)
 				copy(new_text[len(lower):], middle)
 				copy(new_text[len(lower) + len(middle):], upper)
 
-				delete(document.text)
+				delete(document.text, runtime.heap_allocator())
 
 				document.text = new_text
 			} else {
@@ -266,9 +272,9 @@ document_apply_changes :: proc(
 			document.used_text = len(change.text)
 
 			if document.used_text > len(document.text) {
-				new_text := make([]u8, document.used_text * 2)
+				new_text := make([]u8, document.used_text * 2, runtime.heap_allocator())
 				copy(new_text, change.text)
-				delete(document.text)
+				delete(document.text, runtime.heap_allocator())
 				document.text = new_text
 			} else {
 				copy(document.text, change.text)
@@ -306,7 +312,7 @@ document_close :: proc(uri_string: string) -> common.Error {
 
 	common.delete_uri(document.uri)
 
-	delete(document.text)
+	delete(document.text, runtime.heap_allocator())
 	delete(document.package_name)
 
 	document.used_text = 0
@@ -371,9 +377,19 @@ document_refresh :: proc(document: ^Document, config: ^common.Config, writer: ^W
 	return .None
 }
 
+MAX_PARSER_ERRORS :: 256
+
 current_errors: [dynamic]ParserError
+current_parser: ^parser.Parser
 
 parser_error_handler :: proc(pos: tokenizer.Pos, msg: string, args: ..any) {
+	if len(current_errors) >= MAX_PARSER_ERRORS {
+		if current_parser != nil {
+			current_parser.curr_tok = tokenizer.Token{kind = .EOF}
+		}
+		return
+	}
+
 	error := ParserError {
 		line    = pos.line,
 		column  = pos.column,
@@ -382,6 +398,10 @@ parser_error_handler :: proc(pos: tokenizer.Pos, msg: string, args: ..any) {
 		message = fmt.tprintf(msg, ..args),
 	}
 	append(&current_errors, error)
+
+	if len(current_errors) >= MAX_PARSER_ERRORS && current_parser != nil {
+		current_parser.curr_tok = tokenizer.Token{kind = .EOF}
+	}
 }
 
 parse_document :: proc(document: ^Document, config: ^common.Config) -> ([]ParserError, bool) {
@@ -391,15 +411,19 @@ parse_document :: proc(document: ^Document, config: ^common.Config) -> ([]Parser
 		flags = {.Optional_Semicolons},
 	}
 
-	current_errors = make([dynamic]ParserError, context.temp_allocator)
+	current_errors = make([dynamic]ParserError, 0, MAX_PARSER_ERRORS, context.temp_allocator)
 
 	if document.uri.uri in file_resolve_cache.files {
 		delete_key(&file_resolve_cache.files, document.uri.uri)
 	}
 
-	free_all(virtual.arena_allocator(document.allocator))
+	document_allocator := virtual.arena_allocator(document.allocator)
+	old_allocator := context.allocator
+	defer context.allocator = old_allocator
 
-	context.allocator = virtual.arena_allocator(document.allocator)
+	free_all(document_allocator)
+
+	context.allocator = document_allocator
 
 	dir := filepath.base(filepath.dir(document.fullpath))
 	pkg := new(ast.Package)
@@ -423,6 +447,8 @@ parse_document :: proc(document: ^Document, config: ^common.Config) -> ([]Parser
 		return nil, true
 	}
 
+	current_parser = &p
+	defer current_parser = nil
 	parser.parse_file(&p, &document.ast)
 
 	parse_imports(document, config)
