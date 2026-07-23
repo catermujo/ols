@@ -356,6 +356,8 @@ fallback_position_context_completion :: proc(
 
 	parser.advance_token(&p)
 
+	old_allocator := context.allocator
+	defer context.allocator = old_allocator
 	context.allocator = context.temp_allocator
 
 	e := parser.parse_expr(&p, true)
@@ -487,6 +489,8 @@ fallback_position_context_signature :: proc(
 
 	parser.advance_token(&p)
 
+	old_allocator := context.allocator
+	defer context.allocator = old_allocator
 	context.allocator = context.temp_allocator
 
 	position_context.call = parser.parse_expr(&p, true)

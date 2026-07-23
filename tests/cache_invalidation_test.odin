@@ -2,6 +2,7 @@ package tests
 
 import "core:log"
 import "core:mem"
+import "core:mem/virtual"
 import "core:odin/ast"
 import "core:odin/parser"
 import "core:testing"
@@ -113,5 +114,65 @@ Value :: Thing{field = 1}
 
 	if len(tracking_allocator.allocation_map) != 0 {
 		log.errorf("expected no tracked symbol allocations, found %v", len(tracking_allocator.allocation_map))
+	}
+}
+
+@(test)
+document_refresh_restores_context_allocator :: proc(t: ^testing.T) {
+	old_allocator := context.allocator
+	allocator := new(virtual.Arena, context.temp_allocator)
+	_ = virtual.arena_init_growing(allocator)
+	defer virtual.arena_destroy(allocator)
+	defer context.allocator = old_allocator
+
+	fullpath := "/tmp/ols-document-allocator-test.odin"
+	source := "package test\nValue :: int\n"
+	document := server.Document {
+		fullpath  = fullpath,
+		uri       = common.create_uri(fullpath, context.temp_allocator),
+		text      = transmute([]u8)source,
+		used_text = len(source),
+		allocator = allocator,
+	}
+
+	config := common.Config{enable_unused_imports_reporting = true}
+	if err := server.document_refresh(&document, &config, nil); err != .None {
+		log.errorf("document_refresh failed: %v", err)
+		return
+	}
+
+	if context.allocator.data != old_allocator.data {
+		log.error(t, "document_refresh changed the caller allocator")
+	}
+}
+
+@(test)
+setup_index_restores_context_allocator :: proc(t: ^testing.T) {
+	old_allocator := context.allocator
+	server.setup_index(server.get_builtin_path())
+	defer server.free_index()
+
+	if context.allocator.data != old_allocator.data {
+		log.error(t, "setup_index changed the caller allocator")
+	}
+}
+
+@(test)
+document_refresh_stops_parser_recovery :: proc(t: ^testing.T) {
+	allocator := new(virtual.Arena, context.temp_allocator)
+	_ = virtual.arena_init_growing(allocator)
+	defer virtual.arena_destroy(allocator)
+
+	source := "package test\nwith value {}\n"
+	document := server.Document {
+		fullpath  = "/tmp/ols-parser-recovery-test.odin",
+		uri       = common.create_uri("/tmp/ols-parser-recovery-test.odin", context.temp_allocator),
+		text      = transmute([]u8)source,
+		used_text = len(source),
+		allocator = allocator,
+	}
+
+	if err := server.document_refresh(&document, &common.Config{}, nil); err != .None {
+		log.errorf("document_refresh failed: %v", err)
 	}
 }

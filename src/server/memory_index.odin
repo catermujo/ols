@@ -22,17 +22,8 @@ memory_index_clear_cache :: proc(index: ^MemoryIndex) {
 }
 
 memory_index_lookup :: proc(index: ^MemoryIndex, name: string, pkg: string) -> (Symbol, bool) {
-	if index.last_package_name == pkg && index.last_package != nil {
-		return index.last_package[name]
-	}
-
 	if _pkg, ok := index.collection.packages[pkg]; ok {
-		index.last_package = _pkg.symbols
-		index.last_package_name = pkg
 		return _pkg.symbols[name]
-	} else {
-		index.last_package = nil
-		index.last_package_name = ""
 	}
 
 	return {}, false

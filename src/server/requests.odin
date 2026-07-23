@@ -55,22 +55,27 @@ Request :: struct {
 
 
 requests_semaphore: sync.Sema
+requests_space_semaphore: sync.Sema
 requests_mutex: sync.Mutex
 
 requests: [dynamic]Request
 deletings: [dynamic]Request
 
 SLOW_REQUEST_THRESHOLD_MS :: 200
+REQUEST_QUEUE_CAPACITY :: 64
 
 thread_request_main :: proc(data: rawptr) {
 	request_data := cast(^RequestThreadData)data
+	sync.sema_post(&requests_space_semaphore, REQUEST_QUEUE_CAPACITY)
 
 	for common.config.running {
+		sync.sema_wait(&requests_space_semaphore)
 		context.logger = request_data.logger^
 
 		header, success := read_and_parse_header(request_data.reader)
 
 		if (!success) {
+			sync.sema_post(&requests_space_semaphore)
 			log.error("Failed to read and parse header")
 			return
 		}
@@ -79,6 +84,7 @@ thread_request_main :: proc(data: rawptr) {
 		value, success = read_and_parse_body(request_data.reader, header)
 
 		if (!success) {
+			sync.sema_post(&requests_space_semaphore)
 			log.error("Failed to read and parse body")
 			return
 		}
@@ -86,6 +92,7 @@ thread_request_main :: proc(data: rawptr) {
 		root, ok := value.(json.Object)
 
 		if !ok {
+			sync.sema_post(&requests_space_semaphore)
 			log.error("No root object")
 			return
 		}
@@ -107,7 +114,8 @@ thread_request_main :: proc(data: rawptr) {
 		method_value, has_method := root["method"]
 		if !has_method {
 			// Ignore responses to server-initiated client requests.
-			json.destroy_value(root)
+			json.destroy_value(root, runtime.heap_allocator())
+			sync.sema_post(&requests_space_semaphore)
 			continue
 		}
 
@@ -117,7 +125,8 @@ thread_request_main :: proc(data: rawptr) {
 
 		if method == "$/cancelRequest" {
 			append(&deletings, Request{id = id})
-			json.destroy_value(root)
+			json.destroy_value(root, runtime.heap_allocator())
+			sync.sema_post(&requests_space_semaphore)
 		} else {
 			append(&requests, Request{id = id, value = root})
 			sync.sema_post(&requests_semaphore)
@@ -220,7 +229,7 @@ read_and_parse_body :: proc(reader: ^Reader, header: Header) -> (json.Value, boo
 
 	err: json.Error
 	s := ensure_valid_utf8(string(data), context.temp_allocator)
-	value, err = json.parse_string(data = s, allocator = context.allocator, parse_integers = true)
+	value, err = json.parse_string(data = s, allocator = runtime.heap_allocator(), parse_integers = true)
 
 	if (err != json.Error.None) {
 		log.error("Failed to parse body", err)
@@ -288,6 +297,7 @@ consume_requests :: proc(config: ^common.Config, writer: ^Writer) -> bool {
 		if delete_index != -1 {
 			cancel(requests[delete_index].value, requests[delete_index].id, writer, config)
 			ordered_remove(&requests, delete_index)
+			sync.sema_post(&requests_space_semaphore)
 		}
 	}
 	clear(&deletings)
@@ -307,6 +317,7 @@ consume_requests :: proc(config: ^common.Config, writer: ^Writer) -> bool {
 	for ; request_index < len(temp_requests); request_index += 1 {
 		request := temp_requests[request_index]
 		call(request.value, request.id, writer, config)
+		json.destroy_value(request.value, runtime.heap_allocator())
 		clear_index_cache()
 		free_all(context.temp_allocator)
 	}
@@ -316,6 +327,7 @@ consume_requests :: proc(config: ^common.Config, writer: ^Writer) -> bool {
 	for i := 0; i < request_index; i += 1 {
 		pop_front(&requests)
 	}
+	sync.sema_post(&requests_space_semaphore, request_index)
 
 	sync.mutex_unlock(&requests_mutex)
 
@@ -334,7 +346,7 @@ consume_requests :: proc(config: ^common.Config, writer: ^Writer) -> bool {
 cancel :: proc(value: json.Value, id: RequestId, writer: ^Writer, config: ^common.Config) {
 	response := make_response_message(id = id, params = ResponseParams{})
 
-	json.destroy_value(value)
+	json.destroy_value(value, runtime.heap_allocator())
 
 	send_response(response, writer)
 }

@@ -2501,7 +2501,7 @@ resolve_identifier_expr :: proc(
 		symbol, ok = internal_resolve_type_identifier(ast_context, v^)
 	case ^ast.Call_Expr:
 		old_call := ast_context.call
-		ast_context.call = cast(^ast.Call_Expr)orig_expr
+		ast_context.call = v
 		defer ast_context.call = old_call
 
 		if _, ok = v.expr.derived.(^ast.Basic_Directive); ok {

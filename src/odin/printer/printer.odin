@@ -257,6 +257,8 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) -> string {
 	p.document = empty()
 	p.document = cons(p.document, visit_expr(p, expr))
 	p.string_builder = strings.builder_make(p.allocator)
+	old_allocator := context.allocator
+	defer context.allocator = old_allocator
 	context.allocator = p.allocator
 
 	list := make([dynamic]Tuple, p.allocator)
@@ -272,6 +274,8 @@ print_file :: proc(p: ^Printer, file: ^ast.File) -> string {
 	p.comments = file.comments
 	p.string_builder = strings.builder_make(0, len(file.src) * 2, p.allocator)
 	p.src = file.src
+	old_allocator := context.allocator
+	defer context.allocator = old_allocator
 	context.allocator = p.allocator
 
 	if p.config.tabs {
