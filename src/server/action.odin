@@ -295,6 +295,7 @@ add_missing_imports :: proc(
 		if _, ok := resolve_type_identifier(ast_context, name^); ok {
 			return
 		}
+		ensure_package_aliases()
 		for collection, pkgs in build_cache.pkg_aliases {
 			for pkg in pkgs {
 				fullpath := path.join({config.collections[collection], pkg})

@@ -2471,6 +2471,11 @@ internal_resolve_type_identifier :: proc(ast_context: ^AstContext, node: ast.Ide
 		}
 	}
 
+	if ast_context.current_package == ast_context.document_package &&
+	   !is_builtin_pkg(ast_context.current_package) {
+		try_build_package(ast_context.current_package, node.name)
+	}
+
 	//last option is to check the index
 	if symbol, ok := lookup(node.name, ast_context.current_package, node.pos.file); ok {
 		return resolve_symbol_return(ast_context, symbol)
