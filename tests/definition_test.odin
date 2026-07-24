@@ -9,6 +9,30 @@ import "src:common"
 import test "src:testing"
 
 @(test)
+ast_goto_typed_constant_definition :: proc(t: ^testing.T) {
+	source := test.Source {
+		config = {enable_definition_skip_alias = true},
+		main = `package test
+
+main :: proc() {
+	_ = Small_S{*}ize
+}
+`,
+		files = {{
+			name = "constants.odin",
+			source = `package test
+
+Small_Size :: u16(12)
+`,
+		}},
+	}
+
+	test.expect_definition_locations(t, &source, {
+		{uri = "file://test/constants.odin", range = {start = {line = 2, character = 0}, end = {line = 2, character = 10}}},
+	})
+}
+
+@(test)
 ast_goto_bit_set_comp_literal :: proc(t: ^testing.T) {
 	source := test.Source {
 		main = `package test

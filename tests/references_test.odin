@@ -13,6 +13,28 @@ import "src:server"
 
 import test "src:testing"
 
+@(test)
+reference_typed_constant :: proc(t: ^testing.T) {
+	source := test.Source {
+		config = {enable_definition_skip_alias = true},
+		main = `package test
+
+Small_Size :: u16(12)
+
+main :: proc() {
+	_ = Small_Size
+	_ = Small_S{*}ize
+}
+`,
+	}
+
+	test.expect_reference_locations(t, &source, {
+		{uri = "file://test/main.odin", range = {start = {line = 2, character = 0}, end = {line = 2, character = 10}}},
+		{uri = "file://test/main.odin", range = {start = {line = 5, character = 5}, end = {line = 5, character = 15}}},
+		{uri = "file://test/main.odin", range = {start = {line = 6, character = 5}, end = {line = 6, character = 15}}},
+	})
+}
+
 reset_reference_config :: proc() {
 	delete(common.config.workspace_folders)
 	common.config.workspace_folders = nil

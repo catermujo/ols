@@ -427,16 +427,18 @@ resolve_definition_skip_alias_target :: proc(
 	for _ in 0 ..< 8 {
 		changed := false
 
-		if generic, ok := result.value.(SymbolGenericValue); ok && generic.expr != nil {
-			if resolved_location, ok := resolve_location_type_expression(ast_context, generic.expr); ok {
-				if symbol_has_useful_location(resolved_location) {
-					if resolved_location.range != result.range ||
-					   resolved_location.uri != result.uri ||
-					   resolved_location.pkg != result.pkg ||
-					   resolved_location.type != result.type {
-						result = resolved_location
-						changed = true
-						pending_alias = is_skip_alias_candidate(ast_context, result)
+		if pending_alias {
+			if generic, ok := result.value.(SymbolGenericValue); ok && generic.expr != nil {
+				if resolved_location, ok := resolve_location_type_expression(ast_context, generic.expr); ok {
+					if symbol_has_useful_location(resolved_location) {
+						if resolved_location.range != result.range ||
+						   resolved_location.uri != result.uri ||
+						   resolved_location.pkg != result.pkg ||
+						   resolved_location.type != result.type {
+							result = resolved_location
+							changed = true
+							pending_alias = is_skip_alias_candidate(ast_context, result)
+						}
 					}
 				}
 			}
