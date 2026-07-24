@@ -195,17 +195,29 @@ should_collect_file :: proc(file_tags: parser.File_Tags) -> bool {
 	return true
 }
 
-try_build_package :: proc(pkg_name: string) {
+try_build_package :: proc(pkg_name: string, required_name := "") {
 	if pkg, ok := build_cache.loaded_pkgs[pkg_name]; ok {
 		return
 	}
+
+	if required_name != "" {
+		cache_key := fmt.tprintf("%s:%s", pkg_name, required_name)
+		if _, ok := build_cache.indexed_package_names[cache_key]; ok {
+			return
+		}
+		build_cache.indexed_package_names[strings.clone(cache_key, indexer.index.collection.allocator)] = true
+	}
+
 	defer clear_index_cache()
 
-	progress_token := progress_task_begin(
-		"OLS_INDEX_PACKAGE",
-		fmt.tprintf("Index package %s", filepath.base(pkg_name)),
-		pkg_name,
-	)
+	progress_token := ""
+	if required_name == "" {
+		progress_token = progress_task_begin(
+			"OLS_INDEX_PACKAGE",
+			fmt.tprintf("Index package %s", filepath.base(pkg_name)),
+			pkg_name,
+		)
+	}
 
 	matches, err := filepath.glob(fmt.tprintf("%v/*.odin", pkg_name), context.temp_allocator)
 
@@ -228,17 +240,22 @@ try_build_package :: proc(pkg_name: string) {
 			if skip_file(filepath.base(fullpath)) {
 				continue
 			}
+			if _, ok := build_cache.indexed_files[fullpath]; ok {
+				continue
+			}
 
 			processed_files += 1
 			percentage := 0
 			if len(matches) > 0 {
 				percentage = (processed_files * 100) / len(matches)
 			}
-			progress_report(
-				progress_token,
-				fmt.tprintf("%s (%s)", pkg_name, filepath.base(fullpath)),
-				percentage,
-			)
+			if progress_token != "" {
+				progress_report(
+					progress_token,
+					fmt.tprintf("%s (%s)", pkg_name, filepath.base(fullpath)),
+					percentage,
+				)
+			}
 
 			data, err := os.read_entire_file(fullpath, context.allocator)
 
@@ -249,6 +266,9 @@ try_build_package :: proc(pkg_name: string) {
 
 			source := string(data)
 			if source_has_ignore_file_tag(source) {
+				continue
+			}
+			if required_name != "" && !strings.contains(source, required_name) {
 				continue
 			}
 
@@ -289,15 +309,20 @@ try_build_package :: proc(pkg_name: string) {
 			uri := common.create_uri(fullpath, context.allocator)
 
 			collect_symbols(&indexer.index.collection, file, uri.uri)
+			build_cache.indexed_files[strings.clone(fullpath, indexer.index.collection.allocator)] = true
 
 			runtime.arena_free_all(&arena)
 		}
 	}
 
-	build_cache.loaded_pkgs[strings.clone(pkg_name, indexer.index.collection.allocator)] = PackageCacheInfo {
-		timestamp = time.now(),
+	if required_name == "" {
+		build_cache.loaded_pkgs[strings.clone(pkg_name, indexer.index.collection.allocator)] = PackageCacheInfo {
+			timestamp = time.now(),
+		}
 	}
-	progress_end(progress_token, fmt.tprintf("Indexed %s", pkg_name))
+	if progress_token != "" {
+		progress_end(progress_token, fmt.tprintf("Indexed %s", pkg_name))
+	}
 }
 
 remove_package_file_doc_comment :: proc(pkg: ^SymbolPackage, uri: string, allocator: mem.Allocator) {
@@ -385,10 +410,12 @@ remove_index_file :: proc(uri: common.Uri) -> common.Error {
 	when ODIN_OS == .Windows {
 		fullpath, _ = filepath.replace_separators(fullpath, '/', context.temp_allocator)
 	}
+	clear_indexed_package_names()
 
 	corrected_uri := common.create_uri(fullpath, context.temp_allocator)
 
 	remove_indexed_file_data(corrected_uri.uri)
+	delete_key(&build_cache.indexed_files, fullpath)
 
 	clear_all_file_resolve_cache()
 	reference_import_cache_remove_file(fullpath)
@@ -414,6 +441,7 @@ index_file :: proc(uri: common.Uri, text: string) -> common.Error {
 		correct := common.get_case_sensitive_path(fullpath, context.temp_allocator)
 		fullpath, _ = filepath.replace_separators(correct, '/', context.temp_allocator)
 	}
+	clear_indexed_package_names()
 
 	dir := filepath.base(filepath.dir(fullpath))
 
@@ -462,6 +490,7 @@ index_file :: proc(uri: common.Uri, text: string) -> common.Error {
 	if ret := collect_symbols(&indexer.index.collection, file, corrected_uri.uri); ret != .None {
 		log.errorf("failed to collect symbols on save %v", ret)
 	}
+	build_cache.indexed_files[strings.clone(fullpath, indexer.index.collection.allocator)] = true
 
 	clear_all_file_resolve_cache()
 	reference_import_cache_update_file(fullpath, text)
@@ -472,6 +501,10 @@ index_file :: proc(uri: common.Uri, text: string) -> common.Error {
 
 setup_index :: proc(builtin_path: string) {
 	build_cache.loaded_pkgs = make(map[string]PackageCacheInfo, 50, context.allocator)
+	build_cache.indexed_files = make(map[string]bool, 512, context.allocator)
+	build_cache.indexed_package_names = make(map[string]bool, 512, context.allocator)
+	build_cache.pkg_aliases = make(map[string][dynamic]string, 16, context.allocator)
+	build_cache.package_aliases_discovered = false
 	symbol_collection := make_symbol_collection(context.allocator, &common.config)
 	indexer.index = make_memory_index(symbol_collection)
 

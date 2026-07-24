@@ -57,8 +57,11 @@ resolve_ranged_file_cached :: proc(document: ^Document, range: common.Range, all
 }
 
 BuildCache :: struct {
-	loaded_pkgs: map[string]PackageCacheInfo,
-	pkg_aliases: map[string][dynamic]string,
+	loaded_pkgs:                map[string]PackageCacheInfo,
+	indexed_files:              map[string]bool,
+	indexed_package_names:      map[string]bool,
+	pkg_aliases:                map[string][dynamic]string,
+	package_aliases_discovered: bool,
 }
 
 PackageCacheInfo :: struct {
@@ -67,6 +70,15 @@ PackageCacheInfo :: struct {
 
 @(thread_local)
 build_cache: BuildCache
+
+clear_indexed_package_names :: proc() {
+	allocator := indexer.index.collection.allocator
+	for key in build_cache.indexed_package_names {
+		delete(key, allocator)
+	}
+	delete(build_cache.indexed_package_names)
+	build_cache.indexed_package_names = make(map[string]bool, 512, allocator)
+}
 
 
 clear_all_package_aliases :: proc() {
@@ -79,7 +91,17 @@ clear_all_package_aliases :: proc() {
 
 	delete(build_cache.pkg_aliases)
 	build_cache.pkg_aliases = nil
+	build_cache.package_aliases_discovered = false
 	reference_import_cache_reset()
+}
+
+ensure_package_aliases :: proc() {
+	if build_cache.package_aliases_discovered {
+		return
+	}
+
+	build_cache.package_aliases_discovered = true
+	find_all_package_aliases()
 }
 
 package_alias_for_dir :: proc(collection_root, pkg_dir: string, allocator := context.temp_allocator) -> (string, bool) {

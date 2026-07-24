@@ -147,7 +147,13 @@ document_open :: proc(uri_string: string, text: string, config: ^common.Config, 
 
 		document_setup(document)
 
-		if err := document_refresh(document, config, writer); err != .None {
+		if err := document_refresh(
+			document,
+			config,
+			writer,
+			index_imported_packages = false,
+			index_current_package = false,
+		); err != .None {
 			return err
 		}
 	} else {
@@ -162,7 +168,13 @@ document_open :: proc(uri_string: string, text: string, config: ^common.Config, 
 
 		document_setup(&document)
 
-		if err := document_refresh(&document, config, writer); err != .None {
+		if err := document_refresh(
+			&document,
+			config,
+			writer,
+			index_imported_packages = false,
+			index_current_package = false,
+		); err != .None {
 			return err
 		}
 
@@ -282,7 +294,13 @@ document_apply_changes :: proc(
 		}
 	}
 
-	return document_refresh(document, config, writer)
+	return document_refresh(
+		document,
+		config,
+		writer,
+		index_imported_packages = false,
+		index_current_package = false,
+	)
 }
 
 document_close :: proc(uri_string: string) -> common.Error {
@@ -322,8 +340,19 @@ document_close :: proc(uri_string: string) -> common.Error {
 	return .None
 }
 
-document_refresh :: proc(document: ^Document, config: ^common.Config, writer: ^Writer) -> common.Error {
-	errors, ok := parse_document(document, config)
+document_refresh :: proc(
+	document: ^Document,
+	config: ^common.Config,
+	writer: ^Writer,
+	index_imported_packages := true,
+	index_current_package := true,
+) -> common.Error {
+	errors, ok := parse_document(
+		document,
+		config,
+		index_imported_packages,
+		index_current_package,
+	)
 
 	if !ok {
 		return .ParseError
@@ -404,7 +433,12 @@ parser_error_handler :: proc(pos: tokenizer.Pos, msg: string, args: ..any) {
 	}
 }
 
-parse_document :: proc(document: ^Document, config: ^common.Config) -> ([]ParserError, bool) {
+parse_document :: proc(
+	document: ^Document,
+	config: ^common.Config,
+	index_imported_packages := true,
+	index_current_package := true,
+) -> ([]ParserError, bool) {
 	p := parser.Parser {
 		err   = parser_error_handler,
 		warn  = common.parser_warning_handler,
@@ -451,7 +485,12 @@ parse_document :: proc(document: ^Document, config: ^common.Config) -> ([]Parser
 	defer current_parser = nil
 	parser.parse_file(&p, &document.ast)
 
-	parse_imports(document, config)
+	parse_imports(
+		document,
+		config,
+		index_imported_packages = index_imported_packages,
+		index_current_package = index_current_package,
+	)
 
 	folder := filepath.dir(document.fullpath)
 	if strings.equal_fold(folder, config.builtin_path) {
@@ -461,7 +500,12 @@ parse_document :: proc(document: ^Document, config: ^common.Config) -> ([]Parser
 	return current_errors[:], true
 }
 
-parse_imports :: proc(document: ^Document, config: ^common.Config) {
+parse_imports :: proc(
+	document: ^Document,
+	config: ^common.Config,
+	index_imported_packages := true,
+	index_current_package := true,
+) {
 	imports := make([dynamic]Package)
 
 	for imp, index in document.ast.imports {
@@ -527,11 +571,15 @@ parse_imports :: proc(document: ^Document, config: ^common.Config) {
 		}
 	}
 
-	for imp in imports {
-		try_build_package(imp.name)
+	if index_imported_packages {
+		for imp in imports {
+			try_build_package(imp.name)
+		}
 	}
 
-	try_build_package(document.package_name)
+	if index_current_package {
+		try_build_package(document.package_name)
+	}
 
 	document.imports = imports[:]
 }

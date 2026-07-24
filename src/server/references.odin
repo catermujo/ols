@@ -689,7 +689,12 @@ reference_get_file_cached :: proc(fullpath, target_name: string) -> (Document, b
 			return Document{}, false
 		}
 
-		parse_imports(&entry.document, &common.config)
+		parse_imports(
+			&entry.document,
+			&common.config,
+			index_imported_packages = false,
+			index_current_package = false,
+		)
 		reference_import_cache.resolved_files[strings.clone(forward_path, reference_cache_allocator())] = entry
 	}
 
@@ -1326,10 +1331,15 @@ reference_collect_resolved_symbol_locations :: proc(
 	defer document_free_allocator(document.allocator)
 
 	document_setup(&document)
-	if refresh_err := document_refresh(&document, config, nil); refresh_err != .None {
+	if refresh_err := document_refresh(
+		&document,
+		config,
+		nil,
+		index_imported_packages = false,
+		index_current_package = false,
+	); refresh_err != .None {
 		return nil, false
 	}
-
 	position := search_symbol.range.start
 	if position.character < search_symbol.range.end.character {
 		position.character += 1
@@ -1455,6 +1465,9 @@ resolve_references :: proc(
 			return locations[:], true
 		}
 	}
+	if search_symbol.name != "" && !is_builtin_pkg(search_symbol.pkg) {
+		try_build_package(search_symbol.pkg, search_symbol.name)
+	}
 
 	search_declared_package_name := reference_search_declared_package_name(document, search_symbol)
 
@@ -1525,6 +1538,8 @@ resolve_references :: proc(
 			context.allocator,
 			include_target = skip_alias_definition_targets,
 		)
+		has_target_name := search_symbol.name != "" &&
+			strings.contains(string(document.text), search_symbol.name)
 
 		in_pkg := false
 
@@ -1542,6 +1557,9 @@ resolve_references :: proc(
 		   	document_declared_package_name,
 		   	search_symbol.pkg,
 		   ) {
+			if !has_target_name && len(alias_definition_locations) == 0 {
+				continue
+			}
 			symbols_and_nodes, ok := reference_resolve_file_cached(fullpath, resolve_flag, target_name)
 			if !ok {
 				continue

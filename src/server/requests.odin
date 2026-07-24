@@ -950,12 +950,6 @@ request_initialize :: proc(
 	}
 
 	if progress_available() {
-		progress_report(progress_token, "Scanning workspace packages", 70)
-	}
-
-	find_all_package_aliases()
-
-	if progress_available() {
 		progress_end(progress_token, "Ready")
 	}
 

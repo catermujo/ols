@@ -2120,6 +2120,8 @@ append_non_imported_packages :: proc(
 		return
 	}
 
+	ensure_package_aliases()
+
 	i := len(items)
 	for collection, pkgs in build_cache.pkg_aliases {
 		for pkg in pkgs {
