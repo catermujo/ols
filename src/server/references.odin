@@ -448,31 +448,6 @@ reference_import_cache_remove_file :: proc(fullpath: string) {
 	}
 }
 
-reference_collect_known_package_dirs :: proc(paths: ^map[string]struct{}) {
-	for collection, aliases in build_cache.pkg_aliases {
-		root, ok := common.config.collections[collection]
-		if !ok {
-			continue
-		}
-
-		for alias in aliases {
-			full := path.join(elems = {root, alias}, allocator = context.temp_allocator)
-			full = path.clean(full, context.temp_allocator)
-			if reference_should_skip_dir(full) {
-				continue
-			}
-			add_reference_candidate_path(paths, full)
-		}
-	}
-
-	for pkg_name, _ in indexer.index.collection.packages {
-		if is_builtin_pkg(pkg_name) || reference_should_skip_dir(pkg_name) {
-			continue
-		}
-		add_reference_candidate_path(paths, pkg_name)
-	}
-}
-
 reference_import_cache_ensure_initialized :: proc() {
 	if reference_import_cache.initialized {
 		return
@@ -480,46 +455,6 @@ reference_import_cache_ensure_initialized :: proc() {
 
 	reference_import_cache_reset()
 	reference_import_cache_ensure_maps()
-
-	package_dirs := make(map[string]struct{}, 0, context.temp_allocator)
-	reference_collect_known_package_dirs(&package_dirs)
-
-	scan_arena: runtime.Arena
-	_ = runtime.arena_init(&scan_arena, mem.Megabyte * 2, runtime.default_allocator())
-	defer runtime.arena_destroy(&scan_arena)
-
-	for pkg_dir in package_dirs {
-		matches, err := filepath.glob(fmt.tprintf("%s/*.odin", pkg_dir), context.temp_allocator)
-		if err != nil && err != .Not_Exist {
-			continue
-		}
-
-		for fullpath in matches {
-			runtime.arena_free_all(&scan_arena)
-			scan_allocator := runtime.arena_allocator(&scan_arena)
-			data, err := os.read_entire_file(fullpath, scan_allocator)
-			if err != nil {
-				log.errorf("failed to read entire file for reference import cache %v: %v", fullpath, err)
-				continue
-			}
-
-			source := string(data)
-			if source_has_ignore_file_tag(source) {
-				continue
-			}
-
-			import_paths := make(map[string]struct{}, 0, context.temp_allocator)
-			reference_collect_source_import_paths(fullpath, source, &import_paths)
-
-			import_list := make([dynamic]string, 0, len(import_paths), context.temp_allocator)
-			for import_path in import_paths {
-				append(&import_list, import_path)
-			}
-
-			declared_package_name := reference_source_package_name(fullpath, source, context.temp_allocator)
-			reference_import_cache_store_file(fullpath, import_list[:], declared_package_name)
-		}
-	}
 
 	reference_import_cache.initialized = true
 }
@@ -537,32 +472,77 @@ collect_reference_cached_package_files :: proc(pkg_name: string, paths: ^map[str
 	return len(files) > 0
 }
 
-collect_reference_cached_importers :: proc(pkg_name: string, paths: ^map[string]struct{}) {
-	files, ok := reference_import_cache.importers_by_package[pkg_name]
-	if !ok {
-		reference_import_cache_scan_tree(filepath.dir(pkg_name))
-		files, ok = reference_import_cache.importers_by_package[pkg_name]
-		if !ok {
-			return
+reference_collect_indexed_importer_package_dirs :: proc(
+	pkg_name: string,
+	package_dirs: ^map[string]struct{},
+) -> bool {
+	target_is_indexed := false
+
+	for importer_pkg_name, pkg in indexer.index.collection.packages {
+		if strings.equal_fold(importer_pkg_name, pkg_name) {
+			target_is_indexed = true
+		}
+
+		for import_path in pkg.imports {
+			if strings.equal_fold(import_path, pkg_name) {
+				package_dirs[importer_pkg_name] = {}
+				break
+			}
 		}
 	}
 
-	importer_pkg_dirs := make(map[string]struct{}, 0, context.temp_allocator)
+	return target_is_indexed
+}
 
-	for fullpath in files {
+reference_cache_collect_package_files :: proc(
+	pkg_dir: string,
+	paths: ^map[string]struct{},
+) {
+	matches, err := filepath.glob(fmt.tprintf("%s/*.odin", pkg_dir), context.temp_allocator)
+	if err != nil && err != .Not_Exist {
+		return
+	}
+
+	for fullpath in matches {
+		if file_has_ignore_file_tag(fullpath) {
+			continue
+		}
+
 		add_reference_candidate_path(paths, fullpath)
 
-		pkg_dir := filepath.dir(fullpath)
-		if _, exists := importer_pkg_dirs[pkg_dir]; !exists {
-			importer_pkg_dirs[strings.clone(pkg_dir, context.temp_allocator)] = {}
+		data, err := os.read_entire_file(fullpath, context.temp_allocator)
+		if err != nil {
+			continue
+		}
+
+		reference_import_cache_update_file(fullpath, string(data))
+	}
+}
+
+collect_reference_cached_importers :: proc(pkg_name: string, paths: ^map[string]struct{}) {
+	importer_pkg_dirs := make(map[string]struct{}, 0, context.temp_allocator)
+
+	if files, ok := reference_import_cache.importers_by_package[pkg_name]; ok {
+		for fullpath in files {
+			add_reference_candidate_path(paths, fullpath)
+			importer_pkg_dirs[filepath.dir(fullpath)] = {}
+		}
+	}
+
+	target_is_indexed := reference_collect_indexed_importer_package_dirs(pkg_name, &importer_pkg_dirs)
+	if !target_is_indexed && len(importer_pkg_dirs) == 0 {
+		reference_import_cache_scan_tree(filepath.dir(pkg_name))
+		if files, ok := reference_import_cache.importers_by_package[pkg_name]; ok {
+			for fullpath in files {
+				add_reference_candidate_path(paths, fullpath)
+				importer_pkg_dirs[filepath.dir(fullpath)] = {}
+			}
 		}
 	}
 
 	// Package-level re-exports can be imported in one file and used everywhere in that package.
 	for pkg_dir in importer_pkg_dirs {
-		if !collect_reference_cached_package_files(pkg_dir, paths) {
-			collect_reference_package_files(pkg_dir, paths)
-		}
+		reference_cache_collect_package_files(pkg_dir, paths)
 	}
 }
 
