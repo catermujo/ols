@@ -9,11 +9,14 @@ import "core:strconv"
 
 import "src:common"
 
+When_Expr_Unknown :: struct {}
+
 When_Expr :: union {
 	int, //Integers types
 	bool, //Boolean types
 	string, //Enum types - those are the hardcoded options from i.e. ODIN_OS
 	^ast.Expr,
+	When_Expr_Unknown,
 }
 
 //Because we use configuration with os names that match the files instead of the enum, i.e. my_file_windows.odin, we have to convert back and fourth.
@@ -255,8 +258,7 @@ resolve_when_ident :: proc(file: ast.File, when_expr_map: map[string]When_Expr, 
 		return value, true
 	}
 
-	// If nothing is found we return it as false boolean.
-	return false, true
+	return When_Expr_Unknown{}, true
 }
 
 resolve_when_expr :: proc(
@@ -274,6 +276,8 @@ resolve_when_expr :: proc(
 		return expr, true
 	case string:
 		return expr, true
+	case When_Expr_Unknown:
+		return expr, true
 	case ^ast.Expr:
 		#partial switch odin_expr in expr.derived {
 		case ^ast.Paren_Expr:
@@ -287,12 +291,21 @@ resolve_when_expr :: proc(
 		case ^ast.Unary_Expr:
 			if odin_expr.op.kind == .Not {
 				expr := resolve_when_expr(file, when_expr_map, odin_expr.expr) or_return
+				if _, ok := expr.(When_Expr_Unknown); ok {
+					return expr, true
+				}
 				b := expr.(bool) or_return
 				return !b, true
 			}
 		case ^ast.Binary_Expr:
 			lhs := resolve_when_expr(file, when_expr_map, odin_expr.left) or_return
 			rhs := resolve_when_expr(file, when_expr_map, odin_expr.right) or_return
+			if _, ok := lhs.(When_Expr_Unknown); ok {
+				return lhs, true
+			}
+			if _, ok := rhs.(When_Expr_Unknown); ok {
+				return rhs, true
+			}
 
 			lhs_bool, lhs_is_bool := lhs.(bool)
 			rhs_bool, rhs_is_bool := rhs.(bool)
@@ -378,6 +391,9 @@ resolve_when_condition :: proc(file: ast.File, condition: ^ast.Expr, when_expr_m
 	}
 
 	if when_expr, ok := resolve_when_expr(file, when_expr_map, condition); ok {
+		if _, ok := when_expr.(When_Expr_Unknown); ok {
+			return true
+		}
 		b, is_bool := when_expr.(bool)
 		return is_bool && b
 	}
