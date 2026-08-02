@@ -942,7 +942,11 @@ resolve_poly_struct :: proc(ast_context: ^AstContext, b: ^SymbolStructValueBuild
 
 
 resolve_poly_union :: proc(ast_context: ^AstContext, poly_params: ^ast.Field_List, symbol: ^Symbol) {
-	if ast_context.call == nil {
+	if ast_context == nil || ast_context.call == nil || poly_params == nil || symbol == nil {
+		return
+	}
+
+	if _, ok := symbol.value.(SymbolUnionValue); !ok {
 		return
 	}
 
@@ -965,6 +969,10 @@ resolve_poly_union :: proc(ast_context: ^AstContext, poly_params: ^ast.Field_Lis
 		}
 
 		for name in param.names {
+			if name == nil {
+				continue
+			}
+
 			append(&poly_names, strings.clone(node_to_string(name), ast_context.allocator))
 			if len(ast_context.call.args) <= i {
 				break
@@ -974,9 +982,15 @@ resolve_poly_union :: proc(ast_context: ^AstContext, poly_params: ^ast.Field_Lis
 				continue
 			}
 
+			arg := clone_expr(ast_context.call.args[i], ast_context.allocator, nil)
+			if arg == nil {
+				i += 1
+				continue
+			}
+
 			if poly_name, ok := get_poly_param_name(name); ok {
-				poly_map[poly_name] = clone_expr(ast_context.call.args[i], ast_context.allocator, nil)
-				poly_names[i] = strings.clone(node_to_string(ast_context.call.args[i]), ast_context.allocator)
+				poly_map[poly_name] = arg
+				poly_names[i] = strings.clone(node_to_string(arg), ast_context.allocator)
 			}
 
 			i += 1
@@ -984,6 +998,10 @@ resolve_poly_union :: proc(ast_context: ^AstContext, poly_params: ^ast.Field_Lis
 	}
 
 	for type, i in symbol_value.types {
+		if type == nil {
+			continue
+		}
+
 		if ident, ok := type.derived.(^ast.Ident); ok {
 			if expr, ok := poly_map[ident.name]; ok {
 				symbol_value.types[i] = expr
@@ -994,6 +1012,10 @@ resolve_poly_union :: proc(ast_context: ^AstContext, poly_params: ^ast.Field_Lis
 			}
 
 			for arg, i in call_expr.args {
+				if arg == nil {
+					continue
+				}
+
 				if ident, ok := arg.derived.(^ast.Ident); ok {
 					if expr, ok := poly_map[ident.name]; ok {
 						call_expr.args[i] = expr

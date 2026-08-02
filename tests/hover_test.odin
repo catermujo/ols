@@ -7163,6 +7163,18 @@ ast_hover_generic_proc_with_maybe :: proc(t: ^testing.T) {
 }
 
 @(test)
+ast_hover_builtin_maybe_alias :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+		Maybe :: union($T: typeid) {T}
+		Error{*} :: Maybe(string)
+		`,
+	}
+
+	test.expect_hover(t, &source, "test.Error :: Maybe(string)")
+}
+
+@(test)
 ast_hover_overload_with_fcda :: proc(t: ^testing.T) {
 	source := test.Source {
 		main     = `package test
