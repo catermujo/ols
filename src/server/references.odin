@@ -1469,7 +1469,10 @@ resolve_references :: proc(
 		try_build_package(search_symbol.pkg, search_symbol.name)
 	}
 
-	search_declared_package_name := reference_search_declared_package_name(document, search_symbol)
+	search_declared_package_name := strings.clone(
+		reference_search_declared_package_name(document, search_symbol),
+		ast_context.allocator,
+	)
 
 	candidate_paths := make(map[string]struct{}, 0, context.temp_allocator)
 	reference_import_cache_ensure_initialized()
