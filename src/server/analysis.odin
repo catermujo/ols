@@ -46,6 +46,7 @@ AstContext :: struct {
 	overloading:               bool,
 	position_hint:             DocumentPositionContextHint,
 	resolving_locals:          bool,
+	fast_locals:               bool, // Definition requests resolve local RHS expressions lazily.
 	// Explicitly set whether to only resolve the correct overload, rather than have it be inferred by
 	// whether we're resolving locals and the position hint
 	//

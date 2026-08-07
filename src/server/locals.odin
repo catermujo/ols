@@ -387,6 +387,43 @@ get_locals_value_decl :: proc(file: ast.File, value_decl: ast.Value_Decl, ast_co
 		return
 	}
 
+	// Definition only needs the RHS shape here. Full assignment expansion is deferred to symbol resolution.
+	if ast_context.fast_locals && len(value_decl.names) == len(value_decl.values) {
+		for name, i in value_decl.names {
+			expr := value_decl.values[i]
+			if expr == nil {
+				continue
+			}
+
+			flags: bit_set[LocalFlag]
+			value_expr: ^ast.Expr
+			if is_variable_declaration(expr) {
+				flags |= {.Variable}
+				value_expr = expr
+			}
+			if value_decl.is_mutable {
+				flags |= {.Mutable}
+			}
+
+			store_local(
+				ast_context,
+				name,
+				expr,
+				value_decl.end.offset,
+				get_ast_node_string(name, file.src),
+				ast_context.non_mutable_only,
+				false,
+				flags,
+				get_package_from_node(expr^),
+				false,
+				value_expr = value_expr,
+				docs = value_decl.docs,
+				comment = value_decl.comment,
+			)
+		}
+		return
+	}
+
 	results := make([dynamic]^ast.Expr, context.temp_allocator)
 	calls := make(map[int]struct{}, 0, context.temp_allocator) //Have to track the calls, since they disallow use of variables afterwards
 	result_starts := make([dynamic]int, context.temp_allocator) // Track the start of each individual values so we can easily skip things like #optional_ok
@@ -879,11 +916,43 @@ get_locals_range_vals :: proc(
 	ast_context: ^AstContext,
 	document_position: ^DocumentPositionContext,
 ) {
-	results := make([dynamic]^ast.Expr, context.temp_allocator)
-
 	if expr == nil {
 		return
 	}
+
+	if ast_context.fast_locals {
+		if binary, ok := expr.derived.(^ast.Binary_Expr); ok &&
+		   (binary.op.kind == .Range_Half || binary.op.kind == .Range_Full) {
+			for value, i in vals {
+				ident, ok := unwrap_ident(value)
+				if !ok {
+					continue
+				}
+
+				rhs := expr
+				if i > 0 {
+					rhs = make_int_ast(ast_context, ident.pos, ident.end)
+				}
+				store_local(
+					ast_context,
+					ident,
+					rhs,
+					ident.pos.offset,
+					ident.name,
+					ast_context.non_mutable_only,
+					false,
+					{.Mutable},
+					get_package_from_node(rhs^),
+					false,
+				)
+			}
+
+			get_locals_stmt(file, body, ast_context, document_position)
+			return
+		}
+	}
+
+	results := make([dynamic]^ast.Expr, context.temp_allocator)
 
 	if binary, ok := expr.derived.(^ast.Binary_Expr); ok {
 		if binary.op.kind == .Range_Half || binary.op.kind == .Range_Full {
