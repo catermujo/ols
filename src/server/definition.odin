@@ -585,14 +585,18 @@ get_definition_location :: proc(document: ^Document, position: common.Position, 
 	ast_context.position_hint = position_context.hint
 
 	get_globals(document.ast, &ast_context)
-	get_locals(&ast_context, &position_context)
 
 	if position_context.import_stmt != nil {
 		if get_all_package_file_locations(document, position_context.import_stmt, &locations) {
 			sanitize_location_ranges(document, &locations)
 			return locations[:], true
 		}
-	} else if position_context.implicit_selector_expr != nil {
+	}
+
+	ast_context.fast_locals = true
+	get_locals(&ast_context, &position_context)
+
+	if position_context.implicit_selector_expr != nil {
 		if resolved, ok := resolve_location_implicit_selector(
 			&ast_context,
 			&position_context,
