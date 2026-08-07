@@ -1554,6 +1554,40 @@ use :: proc(s: ^Sim) {
 }
 
 @(test)
+ast_goto_selector_field_nested_soa_using_call :: proc(t: ^testing.T) {
+	source := test.Source{
+		main = `package test
+Tile :: struct {
+    city: int,
+}
+Base :: struct {
+    using tiles: #soa[4]struct {
+        city: Tile,
+    },
+}
+Chunk_State :: struct {
+    using base: Base,
+}
+terrain_chunk_ref :: proc() -> ^Chunk_State {
+    return nil
+}
+use :: proc() {
+    chunk := terrain_chunk_ref()
+    _ = chunk.ci{*}ty[0]
+}
+`,
+	}
+
+	locations := []common.Location{
+		{
+			range = {start = {line = 6, character = 8}, end = {line = 6, character = 12}},
+		},
+	}
+
+	test.expect_definition_locations(t, &source, locations[:])
+}
+
+@(test)
 ast_goto_identifier_definition_skip_alias_when_config_alias_preserves_location :: proc(t: ^testing.T) {
 	packages := make([dynamic]test.Package, context.temp_allocator)
 

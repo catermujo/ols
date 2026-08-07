@@ -2035,6 +2035,17 @@ resolve_selector_expression :: proc(ast_context: ^AstContext, node: ^ast.Selecto
 					return symbol, ok
 				}
 			}
+			for using_index in s.usings {
+				if using_index < 0 || using_index >= len(s.types) {
+					continue
+				}
+				using_selector := new_type(ast.Selector_Expr, node.pos, node.end, ast_context.allocator)
+				using_selector.expr = s.types[using_index]
+				using_selector.field = node.field
+				if symbol, ok := resolve_selector_expression(ast_context, using_selector); ok {
+					return symbol, true
+				}
+			}
 		case SymbolBitFieldValue:
 			for name, i in s.names {
 				if node.field != nil && name == node.field.name {
@@ -3905,6 +3916,20 @@ resolve_location_symbol_selector :: proc(
 				}
 				symbol.type = .Field
 				return symbol, true
+			}
+		}
+		for using_index in v.usings {
+			if using_index < 0 || using_index >= len(v.types) {
+				continue
+			}
+			using_selector := new_type(ast.Selector_Expr, selector.pos, selector.end, ast_context.allocator)
+			using_selector.expr = v.types[using_index]
+			using_selector.field = selector.field
+			using_symbol, using_ok := resolve_type_expression(ast_context, using_selector.expr)
+			if using_ok {
+				if resolved, ok := resolve_location_symbol_selector(ast_context, using_selector, using_symbol); ok {
+					return resolved, true
+				}
 			}
 		}
 		return {}, false
