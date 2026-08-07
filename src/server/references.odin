@@ -10,25 +10,11 @@ import "core:odin/parser"
 import "core:odin/tokenizer"
 import "core:os"
 import "core:path/filepath"
-import "core:mem/virtual"
 import path "core:path/slashpath"
 import "core:slice"
 import "core:strings"
 
 import "src:common"
-
-ReferenceResolvedFile :: struct {
-	flag:        ResolveReferenceFlag,
-	target_name: string,
-	symbols:     map[uintptr]SymbolAndNode,
-}
-
-ReferenceResolvedFileCacheEntry :: struct {
-	source:   string,
-	fingerprint: u64,
-	document: Document,
-	resolves: [dynamic]ReferenceResolvedFile,
-}
 
 ReferenceImportCache :: struct {
 	file_imports:         map[string][dynamic]string,
@@ -37,7 +23,6 @@ ReferenceImportCache :: struct {
 	package_files:        map[string][dynamic]string,
 	importers_by_package: map[string][dynamic]string,
 	scanned_roots:        map[string]bool,
-	resolved_files:       map[string]ReferenceResolvedFileCacheEntry,
 	initialized:          bool,
 }
 
@@ -58,51 +43,8 @@ reference_source_fingerprint :: proc(source: string) -> u64 {
 	return hash
 }
 
-reference_resolved_file_cache_get_allocator :: proc() -> ^virtual.Arena {
-	arena := new(virtual.Arena, reference_cache_allocator())
-	_ = virtual.arena_init_growing(arena)
-	return arena
-}
-
-reference_resolved_file_cache_free_entry :: proc(entry: ^ReferenceResolvedFileCacheEntry) {
-	if entry.document.allocator != nil {
-		virtual.arena_destroy(entry.document.allocator)
-		free(entry.document.allocator, reference_cache_allocator())
-		entry.document.allocator = nil
-	}
-
-	if entry.source != "" {
-		delete(entry.source, reference_cache_allocator())
-		entry.source = ""
-	}
-}
-
-reference_resolved_file_cache_remove :: proc(fullpath: string) {
-	if reference_import_cache.resolved_files == nil {
-		return
-	}
-
-	forward_path, _ := filepath.replace_separators(fullpath, '/', context.temp_allocator)
-	if entry, ok := reference_import_cache.resolved_files[forward_path]; ok {
-		reference_resolved_file_cache_free_entry(&entry)
-		reference_import_cache.resolved_files[forward_path] = entry
-		delete_key(&reference_import_cache.resolved_files, forward_path)
-	}
-}
-
-reference_resolved_file_cache_reset :: proc() {
-	allocator := reference_cache_allocator()
-	for fullpath, &entry in reference_import_cache.resolved_files {
-		reference_resolved_file_cache_free_entry(&entry)
-		delete(fullpath, allocator)
-	}
-	delete(reference_import_cache.resolved_files)
-	reference_import_cache.resolved_files = nil
-}
-
 reference_import_cache_reset :: proc() {
 	allocator := reference_cache_allocator()
-	reference_resolved_file_cache_reset()
 
 	for _, imports in reference_import_cache.file_imports {
 		for import_path in imports {
@@ -178,10 +120,6 @@ reference_import_cache_ensure_maps :: proc() {
 
 	if reference_import_cache.scanned_roots == nil {
 		reference_import_cache.scanned_roots = make(map[string]bool, 64, allocator)
-	}
-
-	if reference_import_cache.resolved_files == nil {
-		reference_import_cache.resolved_files = make(map[string]ReferenceResolvedFileCacheEntry, 256, allocator)
 	}
 }
 
@@ -509,7 +447,6 @@ reference_import_cache_update_file :: proc(fullpath, src: string) {
 
 reference_import_cache_remove_file :: proc(fullpath: string) {
 	allocator := reference_cache_allocator()
-	reference_resolved_file_cache_remove(fullpath)
 
 	forward_path, _ := filepath.replace_separators(fullpath, '/', context.temp_allocator)
 	pkg_dir := filepath.dir(forward_path)
@@ -623,8 +560,14 @@ reference_cache_collect_package_files :: proc(
 	}
 }
 
-reference_get_file_cached :: proc(fullpath, target_name: string) -> (Document, bool) {
-	data, err := os.read_entire_file(fullpath, context.temp_allocator)
+// Parse reference files into the request arena. Reusing parsed ASTs across
+// requests is unsafe because resolution mutates AST-associated state and the
+// index invalidation path can destroy the backing arena while a copy is live.
+// Keep import parsing side-effect free: the default parse_imports path indexes
+// whole packages, which is not part of reference lookup and can grow the index
+// on every editor request.
+reference_get_file :: proc(fullpath, target_name: string) -> (Document, bool) {
+	data, err := os.read_entire_file(fullpath, context.allocator)
 	if err != nil {
 		return Document{}, false
 	}
@@ -635,107 +578,49 @@ reference_get_file_cached :: proc(fullpath, target_name: string) -> (Document, b
 	}
 
 	reference_import_cache_update_file(fullpath, source)
-	forward_path, _ := filepath.replace_separators(fullpath, '/', context.temp_allocator)
-	fingerprint := reference_source_fingerprint(source)
+	forward_path, _ := filepath.replace_separators(fullpath, '/', context.allocator)
 
-	entry, cached := reference_import_cache.resolved_files[forward_path]
-	if cached && entry.fingerprint != fingerprint {
-		reference_resolved_file_cache_remove(forward_path)
-		cached = false
+	document := Document {
+		uri       = common.create_uri(forward_path, context.allocator),
+		text      = data,
+		used_text = len(data),
+	}
+	document_setup(&document)
+
+	p := parser.Parser {
+		flags = {.Optional_Semicolons},
+	}
+	if !is_ols_builtin_file(forward_path) {
+		p.err = log_error_handler
+		p.warn = log_warning_handler
 	}
 
-	if !cached {
-		entry = ReferenceResolvedFileCacheEntry {
-			source      = strings.clone(source, reference_cache_allocator()),
-			fingerprint = fingerprint,
-			document    = Document {
-				allocator = reference_resolved_file_cache_get_allocator(),
-			},
-		}
-
-		old_allocator := context.allocator
-		defer context.allocator = old_allocator
-		context.allocator = virtual.arena_allocator(entry.document.allocator)
-
-		entry.document.uri = common.create_uri(forward_path, context.allocator)
-		entry.document.text = transmute([]u8)entry.source
-		entry.document.used_text = len(entry.source)
-		document_setup(&entry.document)
-
-		p := parser.Parser {
-			flags = {.Optional_Semicolons},
-		}
-		if !is_ols_builtin_file(forward_path) {
-			p.err = log_error_handler
-			p.warn = log_warning_handler
-		}
-
-		pkg := new(ast.Package)
-		pkg.kind = .Normal
-		pkg.fullpath = entry.document.fullpath
-		pkg.name = filepath.base(filepath.dir(entry.document.fullpath))
-		if pkg.name == "runtime" {
-			pkg.kind = .Runtime
-		}
-
-		entry.document.ast = ast.File {
-			fullpath = entry.document.fullpath,
-			src      = entry.source,
-			pkg      = pkg,
-		}
-
-		if source_has_ignore_file_tag(entry.source) || !parser.parse_file(&p, &entry.document.ast) {
-			reference_resolved_file_cache_free_entry(&entry)
-			return Document{}, false
-		}
-
-		parse_imports(
-			&entry.document,
-			&common.config,
-			index_imported_packages = false,
-			index_current_package = false,
-		)
-		reference_import_cache.resolved_files[strings.clone(forward_path, reference_cache_allocator())] = entry
+	pkg := new(ast.Package)
+	pkg.kind = .Normal
+	pkg.fullpath = document.fullpath
+	pkg.name = filepath.base(filepath.dir(document.fullpath))
+	if pkg.name == "runtime" {
+		pkg.kind = .Runtime
 	}
 
-	return entry.document, true
-}
-
-reference_resolve_file_cached :: proc(
-	fullpath: string,
-	flag: ResolveReferenceFlag,
-	target_name: string,
-) -> (map[uintptr]SymbolAndNode, bool) {
-	forward_path, _ := filepath.replace_separators(fullpath, '/', context.temp_allocator)
-	entry, cached := reference_import_cache.resolved_files[forward_path]
-	if !cached {
-		return nil, false
+	document.ast = ast.File {
+		fullpath = document.fullpath,
+		src      = source,
+		pkg      = pkg,
 	}
 
-	for resolved in entry.resolves {
-		if resolved.flag == flag && resolved.target_name == target_name {
-			return resolved.symbols, true
-		}
+	if source_has_ignore_file_tag(source) || !parse_file_with_allocator(&p, &document.ast, context.allocator) {
+		return Document{}, false
 	}
 
-	old_allocator := context.allocator
-	defer context.allocator = old_allocator
-	context.allocator = virtual.arena_allocator(entry.document.allocator)
-
-	symbols := resolve_entire_file(
-		&entry.document,
-		flag,
-		virtual.arena_allocator(entry.document.allocator),
-		target_name,
+	parse_imports(
+		&document,
+		&common.config,
+		index_imported_packages = false,
+		index_current_package = false,
 	)
-	append(&entry.resolves, ReferenceResolvedFile {
-		flag        = flag,
-		target_name = strings.clone(target_name, virtual.arena_allocator(entry.document.allocator)),
-		symbols     = symbols,
-	})
-	reference_import_cache.resolved_files[forward_path] = entry
 
-	return symbols, true
+	return document, true
 }
 
 collect_reference_cached_importers :: proc(pkg_name: string, paths: ^map[string]struct{}) {
@@ -1515,7 +1400,7 @@ resolve_references :: proc(
 			path := common.get_case_sensitive_path(fullpath, context.temp_allocator)
 			fullpath, _ = filepath.replace_separators(path, '/', context.allocator)
 		}
-		document, ok := reference_get_file_cached(fullpath, target_name)
+		document, ok := reference_get_file(fullpath, target_name)
 		if !ok {
 			continue
 		}
@@ -1541,8 +1426,6 @@ resolve_references :: proc(
 			context.allocator,
 			include_target = skip_alias_definition_targets,
 		)
-		has_target_name := search_symbol.name != "" &&
-			strings.contains(string(document.text), search_symbol.name)
 
 		in_pkg := false
 
@@ -1556,17 +1439,16 @@ resolve_references :: proc(
 		if in_pkg ||
 		   strings.equal_fold(search_symbol.pkg, dir) ||
 		   reference_cached_package_dir_imports_package(
-		   	dir,
-		   	document_declared_package_name,
-		   	search_symbol.pkg,
-		   ) {
-			if !has_target_name && len(alias_definition_locations) == 0 {
-				continue
-			}
-			symbols_and_nodes, ok := reference_resolve_file_cached(fullpath, resolve_flag, target_name)
-			if !ok {
-				continue
-			}
+				dir,
+				document_declared_package_name,
+				search_symbol.pkg,
+			) {
+			symbols_and_nodes := resolve_entire_file(
+				&document,
+				resolve_flag,
+				context.allocator,
+				target_name,
+			)
 			for k, v in symbols_and_nodes {
 				resolved_symbol, resolved_ok := reference_resolve_skip_alias_symbol(
 					ast_context,

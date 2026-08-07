@@ -122,7 +122,7 @@ find_enum_member_definition_fallback :: proc(
 			continue
 		}
 
-		if !parser.parse_file(&p, &file) {
+		if !parse_file_with_allocator(&p, &file, context.temp_allocator) {
 			continue
 		}
 

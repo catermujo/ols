@@ -297,7 +297,7 @@ try_build_package :: proc(pkg_name: string, required_name := "") {
 				pkg      = pkg,
 			}
 
-			ok := parser.parse_file(&p, &file)
+			ok := parse_file_with_allocator(&p, &file, context.allocator)
 
 			if !ok {
 				if !is_ols_builtin_file(fullpath) {
@@ -371,15 +371,9 @@ remove_package_file_doc_comment :: proc(pkg: ^SymbolPackage, uri: string, alloca
 
 remove_indexed_file_data :: proc(corrected_uri: string) {
 	for _, &pkg in indexer.index.collection.packages {
-		for symbol_name, symbol in pkg.symbols {
-			if !strings.equal_fold(corrected_uri, symbol.uri) {
-				continue
-			}
-
-			free_symbol(symbol, indexer.index.collection.allocator)
-			delete_key(&pkg.symbols, symbol_name)
-		}
-
+		// Method entries are shallow copies of package symbols. Remove them
+		// while their shared URI/storage is still valid, before freeing the
+		// package symbols below.
 		for method, &symbols in pkg.methods {
 			for i := len(symbols) - 1; i >= 0; i -= 1 {
 				#no_bounds_check symbol := symbols[i]
@@ -394,6 +388,15 @@ remove_indexed_file_data :: proc(corrected_uri: string) {
 			} else {
 				pkg.methods[method] = symbols
 			}
+		}
+
+		for symbol_name, symbol in pkg.symbols {
+			if !strings.equal_fold(corrected_uri, symbol.uri) {
+				continue
+			}
+
+			free_symbol(symbol, indexer.index.collection.allocator)
+			delete_key(&pkg.symbols, symbol_name)
 		}
 
 		remove_package_file_doc_comment(&pkg, corrected_uri, indexer.index.collection.allocator)
@@ -443,33 +446,42 @@ index_file :: proc(uri: common.Uri, text: string) -> common.Error {
 	}
 	clear_indexed_package_names()
 
-	dir := filepath.base(filepath.dir(fullpath))
-
-	pkg := new(ast.Package)
-	pkg.kind = .Normal
-	pkg.fullpath = fullpath
-	pkg.name = dir
-
-	if dir == "runtime" || strings.contains(fullpath, "base/runtime") {
-		pkg.kind = .Runtime
-	}
-
-	file := ast.File {
-		fullpath = fullpath,
-		src      = text,
-		pkg      = pkg,
-	}
-
 	corrected_uri := common.create_uri(fullpath, context.temp_allocator)
 	is_ignored := source_has_ignore_file_tag(text)
+	file: ast.File
 
 	if !is_ignored {
-		{
-			allocator := context.allocator
-			context.allocator = context.temp_allocator
-			defer context.allocator = allocator
+		// Keep the parser AST completely local to this indexing pass. The old
+		// path allocated the package root with the request allocator and put
+		// the rest of the AST in the global temp arena, so every didChange left
+		// parser-owned allocations behind in long-lived sessions.
+		parse_arena: runtime.Arena
+		_ = runtime.arena_init(&parse_arena, mem.Megabyte * 4, runtime.default_allocator())
+		defer runtime.arena_destroy(&parse_arena)
+		parse_allocator := runtime.arena_allocator(&parse_arena)
 
-			ok = parser.parse_file(&p, &file)
+		{
+			old_allocator := context.allocator
+			defer context.allocator = old_allocator
+			context.allocator = parse_allocator
+
+			dir := filepath.base(filepath.dir(fullpath))
+			pkg := new(ast.Package)
+			pkg.kind = .Normal
+			pkg.fullpath = fullpath
+			pkg.name = dir
+
+			if dir == "runtime" || strings.contains(fullpath, "base/runtime") {
+				pkg.kind = .Runtime
+			}
+
+			file = ast.File {
+				fullpath = fullpath,
+				src      = text,
+				pkg      = pkg,
+			}
+
+			ok = parse_file_with_allocator(&p, &file, parse_allocator)
 
 			if !ok {
 				if !is_ols_builtin_file(fullpath) {

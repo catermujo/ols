@@ -26,7 +26,6 @@ file_resolve_cache: FileResolveCache
 
 clear_all_file_resolve_cache :: proc() {
 	clear(&file_resolve_cache.files)
-	reference_resolved_file_cache_reset()
 }
 
 resolve_entire_file_cached :: proc(document: ^Document) -> FileResolve {

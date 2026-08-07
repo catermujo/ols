@@ -210,7 +210,7 @@ resolve_when_ident_from_package_config_default :: proc(
 		pkg      = pkg_file,
 	}
 
-	if !parser.parse_file(&p, &config_file) {
+	if !parse_file_with_allocator(&p, &config_file, context.temp_allocator) {
 		return {}, false
 	}
 

@@ -96,7 +96,16 @@ find_used_not_imported :: proc(
 	return missing[:]
 }
 
+// Full-file resolution for unused-import diagnostics can become explosively
+// expensive on large generated/gameplay files. Keep this optional diagnostic
+// bounded; the normal document/index features still process those files.
+UNUSED_IMPORT_RESOLVE_MAX_SOURCE_BYTES :: 64 * 1024
+
 find_unused_imports :: proc(document: ^Document, allocator := context.temp_allocator) -> []Package {
+	if document == nil || document.used_text > UNUSED_IMPORT_RESOLVE_MAX_SOURCE_BYTES {
+		return nil
+	}
+
 	arena: runtime.Arena
 
 	_ = runtime.arena_init(&arena, mem.Megabyte * 40, runtime.default_allocator())
