@@ -6,6 +6,7 @@ import "core:os"
 
 import "core:fmt"
 import "core:log"
+import "core:mem"
 import "core:mem/virtual"
 import "core:odin/ast"
 import "core:odin/parser"
@@ -58,6 +59,24 @@ DocumentStorage :: struct {
 }
 
 document_storage: DocumentStorage
+
+// Odin's implicit context is captured when a callee is entered. Set the
+// parser allocator in an outer proc, then call the parser from an inner proc,
+// so every AST node is owned by the requested arena.
+parse_file_with_allocator :: proc(
+	p: ^parser.Parser,
+	file: ^ast.File,
+	allocator: mem.Allocator,
+) -> bool {
+	old_allocator := context.allocator
+	defer context.allocator = old_allocator
+	context.allocator = allocator
+	return parse_file_current_context(p, file)
+}
+
+parse_file_current_context :: proc(p: ^parser.Parser, file: ^ast.File) -> bool {
+	return parser.parse_file(p, file)
+}
 
 document_storage_shutdown :: proc() {
 	for k, v in document_storage.documents {
@@ -347,12 +366,20 @@ document_refresh :: proc(
 	index_imported_packages := true,
 	index_current_package := true,
 ) -> common.Error {
-	errors, ok := parse_document(
-		document,
-		config,
-		index_imported_packages,
-		index_current_package,
-	)
+	errors: []ParserError
+	ok: bool
+	{
+		old_allocator := context.allocator
+		defer context.allocator = old_allocator
+		context.allocator = virtual.arena_allocator(document.allocator)
+
+		errors, ok = parse_document(
+			document,
+			config,
+			index_imported_packages,
+			index_current_package,
+		)
+	}
 
 	if !ok {
 		return .ParseError
@@ -483,7 +510,7 @@ parse_document :: proc(
 
 	current_parser = &p
 	defer current_parser = nil
-	parser.parse_file(&p, &document.ast)
+	parse_file_with_allocator(&p, &document.ast, document_allocator)
 
 	parse_imports(
 		document,

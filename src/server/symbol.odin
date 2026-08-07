@@ -787,6 +787,7 @@ free_symbol :: proc(symbol: Symbol, allocator: mem.Allocator) {
 		free_ast(v.docs, allocator)
 		free_ast(v.comments, allocator)
 		free_ast(v.poly, allocator)
+		delete(v.poly_names, allocator)
 		free_ast(v.align, allocator)
 		free_ast(v.min_field_align, allocator)
 		free_ast(v.max_field_align, allocator)
@@ -809,6 +810,7 @@ free_symbol :: proc(symbol: Symbol, allocator: mem.Allocator) {
 	case SymbolUnionValue:
 		free_ast(v.types, allocator)
 		free_ast(v.poly, allocator)
+		delete(v.poly_names, allocator)
 		free_ast(v.docs, allocator)
 		free_ast(v.comments, allocator)
 		free_ast(v.align, allocator)

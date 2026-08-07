@@ -1,5 +1,6 @@
 package server
 
+import "core:fmt"
 import "core:sync"
 
 WriterFn :: proc(_: rawptr, _: []byte) -> (int, int)
@@ -22,11 +23,24 @@ write_sized :: proc(writer: ^Writer, data: []byte) -> bool {
 	sync.mutex_lock(&writer.writer_mutex)
 	defer sync.mutex_unlock(&writer.writer_mutex)
 
-	written, err := writer.writer_fn(writer.writer_context, data)
+	remaining := data
+	for len(remaining) > 0 {
+		written, err := writer.writer_fn(writer.writer_context, remaining)
 
-	if (err != 0) {
-		return false
+		if err != 0 || written <= 0 || written > len(remaining) {
+			return false
+		}
+
+		remaining = remaining[written:]
 	}
 
 	return true
+}
+
+write_message :: proc(writer: ^Writer, data: []byte) -> bool {
+	header := fmt.tprintf("Content-Length: %v\r\n\r\n", len(data))
+	message := make([]u8, len(header) + len(data), context.temp_allocator)
+	copy(message, transmute([]u8)header)
+	copy(message[len(header):], data)
+	return write_sized(writer, message)
 }
