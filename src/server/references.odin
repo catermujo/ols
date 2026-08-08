@@ -1264,6 +1264,10 @@ resolve_references :: proc(
 	[]common.Location,
 	bool,
 ) {
+	if request_is_stale() {
+		return {}, true
+	}
+
 	locations := make([dynamic]common.Location, 0, ast_context.allocator)
 	fullpaths := make([dynamic]string, 0, ast_context.allocator)
 
@@ -1286,6 +1290,9 @@ resolve_references :: proc(
 		ast_context.allocator,
 		include_target = skip_alias_definition_targets,
 	)
+	if request_is_stale() {
+		return {}, true
+	}
 
 	target_name := get_target_name(position_context, resolve_flag)
 	if config != nil && config.enable_definition_skip_alias {
@@ -1294,6 +1301,9 @@ resolve_references :: proc(
 		target_name = ""
 	}
 	symbols_and_nodes := resolve_entire_file(document, resolve_flag, ast_context.allocator, target_name)
+	if request_is_stale() {
+		return {}, true
+	}
 
 	for k, v in symbols_and_nodes {
 		resolved_symbol, resolved_ok := reference_resolve_skip_alias_symbol(
@@ -1393,6 +1403,10 @@ resolve_references :: proc(
 	paths := slice.unique(fullpaths[:])
 
 	for fullpath in paths {
+		if request_is_stale() {
+			return {}, true
+		}
+
 		defer free_all(context.allocator)
 
 		fullpath := fullpath

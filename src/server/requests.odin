@@ -1,6 +1,8 @@
 #+feature dynamic-literals
 package server
 
+import "base:intrinsics"
+
 import "base:runtime"
 import "core:unicode/utf8"
 
@@ -49,8 +51,9 @@ RequestThreadData :: struct {
 
 Request :: struct {
 	// Nil id means it's a notification - do not respond
-	id:    RequestId,
-	value: json.Value,
+	id:         RequestId,
+	value:      json.Value,
+	generation: u64,
 }
 
 
@@ -60,6 +63,10 @@ requests_mutex: sync.Mutex
 
 requests: [dynamic]Request
 deletings: [dynamic]Request
+
+request_generation:        u64
+active_request_generation: u64
+active_request_running:    bool
 
 SLOW_REQUEST_THRESHOLD_MS :: 200
 REQUEST_QUEUE_CAPACITY :: 64
@@ -122,13 +129,17 @@ thread_request_main :: proc(data: rawptr) {
 		sync.mutex_lock(&requests_mutex)
 
 		method := method_value.(json.String)
+		if request_invalidates_navigation(method) {
+			intrinsics.atomic_add(&request_generation, 1)
+		}
+		generation := intrinsics.atomic_load(&request_generation)
 
 		if method == "$/cancelRequest" {
-			append(&deletings, Request{id = id})
+			append(&deletings, Request{id = id, generation = generation})
 			json.destroy_value(root, runtime.heap_allocator())
 			sync.sema_post(&requests_space_semaphore)
 		} else {
-			append(&requests, Request{id = id, value = root})
+			append(&requests, Request{id = id, value = root, generation = generation})
 			sync.sema_post(&requests_semaphore)
 		}
 
@@ -316,7 +327,10 @@ consume_requests :: proc(config: ^common.Config, writer: ^Writer) -> bool {
 
 	for ; request_index < len(temp_requests); request_index += 1 {
 		request := temp_requests[request_index]
+		active_request_generation = request.generation
+		active_request_running = true
 		call(request.value, request.id, writer, config)
+		active_request_running = false
 		json.destroy_value(request.value, runtime.heap_allocator())
 		clear_index_cache()
 		free_all(context.temp_allocator)
@@ -342,6 +356,41 @@ consume_requests :: proc(config: ^common.Config, writer: ^Writer) -> bool {
 	return true
 }
 
+request_invalidates_navigation :: proc(method: string) -> bool {
+	switch method {
+	case "textDocument/didOpen", "textDocument/didChange", "textDocument/didClose", "textDocument/didSave",
+		 "workspace/didChangeWatchedFiles", "workspace/didChangeConfiguration":
+		return true
+	}
+	return false
+}
+
+request_can_be_dropped_on_edit :: proc(method: string) -> bool {
+	switch method {
+	case "textDocument/definition", "textDocument/typeDefinition", "textDocument/references",
+		 "textDocument/documentHighlight", "textDocument/hover", "textDocument/completion",
+		 "textDocument/signatureHelp", "textDocument/semanticTokens/full", "textDocument/semanticTokens/range",
+		 "textDocument/inlayHint", "textDocument/documentLink", "textDocument/documentSymbol", "textDocument/formatting",
+		 "textDocument/rename", "textDocument/prepareRename", "textDocument/codeAction", "workspace/symbol":
+		return true
+	}
+	return false
+}
+
+request_is_stale :: proc() -> bool {
+	return active_request_running &&
+		intrinsics.atomic_load(&request_generation) != active_request_generation
+}
+
+send_dropped_response :: proc(id: RequestId, writer: ^Writer) {
+	if id == nil {
+		return
+	}
+
+	response := make_response_message(params = ResponseParams{}, id = id)
+	send_response(response, writer)
+}
+
 
 cancel :: proc(value: json.Value, id: RequestId, writer: ^Writer, config: ^common.Config) {
 	response := make_response_message(id = id, params = ResponseParams{})
@@ -363,6 +412,11 @@ call :: proc(value: json.Value, id: RequestId, writer: ^Writer, config: ^common.
 			response := make_response_message_error(id = id, error = ResponseError{code = .MethodNotFound, message = ""})
 			send_error(response, writer)
 		}
+		return
+	}
+
+	if request_is_stale() && request_can_be_dropped_on_edit(method) {
+		send_dropped_response(id, writer)
 		return
 	}
 
@@ -1896,6 +1950,10 @@ notification_did_change_watched_files :: proc(
 			}
 		} else {
 			if uri, ok := common.parse_uri(change.uri, context.temp_allocator); ok {
+				if document := &document_storage.documents[uri.path]; document != nil && document.client_owned {
+					continue
+				}
+
 				if data, err := os.read_entire_file(uri.path, context.temp_allocator); err == nil {
 					index_file(uri, cast(string)data)
 				}
