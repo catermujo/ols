@@ -449,44 +449,48 @@ index_file :: proc(uri: common.Uri, text: string) -> common.Error {
 	corrected_uri := common.create_uri(fullpath, context.temp_allocator)
 	is_ignored := source_has_ignore_file_tag(text)
 	file: ast.File
+	parse_arena: runtime.Arena
+	parse_arena_initialized := false
+	defer {
+		if parse_arena_initialized {
+			runtime.arena_destroy(&parse_arena)
+		}
+	}
 
 	if !is_ignored {
 		// Keep the parser AST completely local to this indexing pass. The old
 		// path allocated the package root with the request allocator and put
 		// the rest of the AST in the global temp arena, so every didChange left
 		// parser-owned allocations behind in long-lived sessions.
-		parse_arena: runtime.Arena
 		arena_err := runtime.arena_init(&parse_arena, mem.Megabyte * 4, runtime.default_allocator())
 		if arena_err != nil {
 			log.errorf("failed to initialize parser arena for %v: %v", fullpath, arena_err)
 			return .InternalError
 		}
-		defer runtime.arena_destroy(&parse_arena)
+		parse_arena_initialized = true
 		parse_allocator := runtime.arena_allocator(&parse_arena)
 
-		{
-			old_allocator := context.allocator
-			defer context.allocator = old_allocator
-			context.allocator = parse_allocator
+		old_allocator := context.allocator
+		context.allocator = parse_allocator
 
-			dir := filepath.base(filepath.dir(fullpath))
-			pkg := new(ast.Package)
-			pkg.kind = .Normal
-			pkg.fullpath = fullpath
-			pkg.name = dir
+		dir := filepath.base(filepath.dir(fullpath))
+		pkg := new(ast.Package)
+		pkg.kind = .Normal
+		pkg.fullpath = fullpath
+		pkg.name = dir
 
-			if dir == "runtime" || strings.contains(fullpath, "base/runtime") {
-				pkg.kind = .Runtime
-			}
-
-			file = ast.File {
-				fullpath = fullpath,
-				src      = text,
-				pkg      = pkg,
-			}
-
-			ok = parse_file_with_allocator(&p, &file, parse_allocator)
+		if dir == "runtime" || strings.contains(fullpath, "base/runtime") {
+			pkg.kind = .Runtime
 		}
+
+		file = ast.File {
+			fullpath = fullpath,
+			src      = text,
+			pkg      = pkg,
+		}
+
+		ok = parse_file_with_allocator(&p, &file, parse_allocator)
+		context.allocator = old_allocator
 	}
 
 	if is_ignored {
