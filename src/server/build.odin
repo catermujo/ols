@@ -456,7 +456,11 @@ index_file :: proc(uri: common.Uri, text: string) -> common.Error {
 		// the rest of the AST in the global temp arena, so every didChange left
 		// parser-owned allocations behind in long-lived sessions.
 		parse_arena: runtime.Arena
-		_ = runtime.arena_init(&parse_arena, mem.Megabyte * 4, runtime.default_allocator())
+		arena_err := runtime.arena_init(&parse_arena, mem.Megabyte * 4, runtime.default_allocator())
+		if arena_err != nil {
+			log.errorf("failed to initialize parser arena for %v: %v", fullpath, arena_err)
+			return .InternalError
+		}
 		defer runtime.arena_destroy(&parse_arena)
 		parse_allocator := runtime.arena_allocator(&parse_arena)
 
@@ -482,22 +486,28 @@ index_file :: proc(uri: common.Uri, text: string) -> common.Error {
 			}
 
 			ok = parse_file_with_allocator(&p, &file, parse_allocator)
-
-			if !ok {
-				if !is_ols_builtin_file(fullpath) {
-					log.errorf("error in parse file for indexing %v", fullpath)
-				}
-			}
 		}
 	}
 
-	remove_indexed_file_data(corrected_uri.uri)
-
 	if is_ignored {
+		remove_indexed_file_data(corrected_uri.uri)
 		clear_all_file_resolve_cache()
 		reference_import_cache_remove_file(fullpath)
 		return .None
 	}
+
+	if !ok || file.syntax_error_count > 0 || file.pkg_decl == nil {
+		log.warnf(
+			"skipping symbol indexing for %v after parse failure (ok=%v, syntax_errors=%v, package_decl=%v)",
+			fullpath,
+			ok,
+			file.syntax_error_count,
+			file.pkg_decl != nil,
+		)
+		return .None
+	}
+
+	remove_indexed_file_data(corrected_uri.uri)
 
 	if ret := collect_symbols(&indexer.index.collection, file, corrected_uri.uri); ret != .None {
 		log.errorf("failed to collect symbols on save %v", ret)

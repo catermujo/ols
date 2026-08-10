@@ -28,6 +28,58 @@ index_file_clears_cross_file_resolve_cache :: proc(t: ^testing.T) {
 	}
 }
 
+@(test)
+index_file_preserves_symbols_after_parse_failure :: proc(t: ^testing.T) {
+	server.setup_index(server.get_builtin_path())
+	defer server.free_index()
+
+	fullpath := "/tmp/index-parse-failure-test.odin"
+	uri := common.create_uri(fullpath, context.temp_allocator)
+
+	if result := server.index_file(uri, "package test\nValue :: int\n"); result != .None {
+		log.errorf("initial index_file failed: %v", result)
+		return
+	}
+
+	pkg, ok := server.indexer.index.collection.packages["/tmp"]
+	if !ok {
+		log.error(t, "expected indexed package")
+		return
+	}
+	if _, ok := pkg.symbols["Value"]; !ok {
+		log.error(t, "expected initial symbol")
+		return
+	}
+
+	if result := server.index_file(uri, "package test\nValue ::\n"); result != .None {
+		log.errorf("failed index_file returned error: %v", result)
+		return
+	}
+
+	pkg, ok = server.indexer.index.collection.packages["/tmp"]
+	if !ok {
+		log.error(t, "expected package after failed reindex")
+		return
+	}
+	if _, ok := pkg.symbols["Value"]; !ok {
+		log.error(t, "failed reindex removed valid symbol")
+	}
+
+	if result := server.index_file(uri, "Value :: int\n"); result != .None {
+		log.errorf("missing-package index_file returned error: %v", result)
+		return
+	}
+
+	pkg, ok = server.indexer.index.collection.packages["/tmp"]
+	if !ok {
+		log.error(t, "expected package after missing-package reindex")
+		return
+	}
+	if _, ok := pkg.symbols["Value"]; !ok {
+		log.error(t, "missing-package reindex removed valid symbol")
+	}
+}
+
 parse_index_test_file :: proc(fullpath, source: string) -> (ast.File, bool) {
 	pkg := new(ast.Package, context.temp_allocator)
 	pkg.kind = .Normal
