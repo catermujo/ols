@@ -73,6 +73,35 @@ Document_Group_Options :: struct {
 	id: string,
 }
 
+contains_hard_newline :: proc(document: ^Document) -> bool {
+	if document == nil {
+		return false
+	}
+
+	#partial switch v in document^ {
+	case Document_Newline:
+		return v.amount > 0
+	case Document_Nest:
+		return contains_hard_newline(v.document)
+	case Document_Group:
+		return contains_hard_newline(v.document)
+	case Document_Cons:
+		for element in v.elements {
+			if contains_hard_newline(element) {
+				return true
+			}
+		}
+	case Document_If_Break_Or:
+		return contains_hard_newline(v.break_document) || contains_hard_newline(v.fit_document)
+	case Document_Align:
+		return contains_hard_newline(v.document)
+	case:
+		return false
+	}
+
+	return false
+}
+
 Document_Break_Parent :: struct {}
 
 empty :: proc(allocator := context.allocator) -> ^Document {

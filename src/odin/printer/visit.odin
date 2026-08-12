@@ -922,6 +922,10 @@ block_uses_do :: proc(stmt: ^ast.Stmt) -> bool {
 	return false
 }
 
+do_body_requires_braces :: proc(p: ^Printer, body: ^ast.Stmt, header: ^Document) -> bool {
+	return !p.config.convert_do && block_uses_do(body) && contains_hard_newline(header)
+}
+
 @(private)
 visit_stmt :: proc(
 	p: ^Printer,
@@ -929,6 +933,7 @@ visit_stmt :: proc(
 	block_type: Block_Type = .Generic,
 	empty_block := false,
 	block_stmt := false,
+	force_braces := false,
 ) -> ^Document {
 	if stmt == nil {
 		return empty()
@@ -961,7 +966,7 @@ visit_stmt :: proc(
 	case ^ast.Using_Stmt:
 		document = cons(document, cons_with_nopl(text("using"), visit_exprs(p, v.list, {.Add_Comma})))
 	case ^ast.Block_Stmt:
-		uses_do := v.uses_do && !p.config.convert_do
+		uses_do := v.uses_do && !p.config.convert_do && !force_braces
 		is_single_line := v.open.line == v.end.line
 
 		if v.label != nil {
@@ -1037,22 +1042,25 @@ visit_stmt :: proc(
 			document = cons(document, group(hang(3, cons(begin_document, end_document))))
 		}
 
+		body_force_braces := do_body_requires_braces(p, v.body, cons(begin_document, end_document))
+		body_uses_do := block_uses_do(v.body) && !p.config.convert_do && !body_force_braces
+
 		set_source_position(p, v.body.pos)
 
-		document = cons_with_nopl(document, visit_stmt(p, v.body, .If_Stmt))
+		document = cons_with_nopl(document, visit_stmt(p, v.body, .If_Stmt, false, false, body_force_braces))
 
 		set_source_position(p, v.body.end)
 
 		if v.else_stmt != nil {
 			if p.config.brace_style == .Allman ||
 			   p.config.brace_style == .Stroustrup ||
-			   (!p.config.convert_do && block_uses_do(v.body)) {
+			   body_uses_do {
 				document = cons(document, newline(1))
 			}
 
 			set_source_position(p, v.else_stmt.pos)
 
-			if !p.config.convert_do && block_uses_do(v.body) {
+			if body_uses_do {
 				document = cons(document, cons_with_nopl(text("else"), visit_stmt(p, v.else_stmt)))
 			} else {
 				document = cons_with_opl(document, cons_with_nopl(text("else"), visit_stmt(p, v.else_stmt)))
@@ -1060,7 +1068,7 @@ visit_stmt :: proc(
 
 
 		}
-		if !p.config.convert_do {
+		if body_uses_do {
 			document = enforce_fit_if_do(v.body, document)
 		}
 	case ^ast.Switch_Stmt:
@@ -1179,12 +1187,13 @@ visit_stmt :: proc(
 		}
 
 		document = cons(document, group(hang(4, for_document)))
+		body_force_braces := do_body_requires_braces(p, v.body, for_document)
 
 		set_source_position(p, v.body.pos)
-		document = cons_with_nopl(document, visit_stmt(p, v.body))
+		document = cons_with_nopl(document, visit_stmt(p, v.body, .Generic, false, false, body_force_braces))
 		set_source_position(p, v.body.end)
 
-		if !p.config.convert_do {
+		if !p.config.convert_do && !body_force_braces {
 			document = enforce_fit_if_do(v.body, document)
 		}
 	case ^ast.Unroll_Range_Stmt:
@@ -1204,12 +1213,13 @@ visit_stmt :: proc(
 		document = cons_with_nopl(document, text("in"))
 
 		document = cons_with_nopl(document, visit_expr(p, v.expr))
+		body_force_braces := do_body_requires_braces(p, v.body, document)
 
 		set_source_position(p, v.body.pos)
-		document = cons_with_nopl(document, visit_stmt(p, v.body))
+		document = cons_with_nopl(document, visit_stmt(p, v.body, .Generic, false, false, body_force_braces))
 		set_source_position(p, v.body.end)
 
-		if !p.config.convert_do {
+		if !p.config.convert_do && !body_force_braces {
 			document = enforce_fit_if_do(v.body, document)
 		}
 	case ^ast.Range_Stmt:
@@ -1244,12 +1254,13 @@ visit_stmt :: proc(
 		// Newlines in a range-loop header trigger semicolon insertion and turn the
 		// header into invalid Odin, so it must remain on one physical line.
 		document = cons(document, enforce_fit(range_document))
+		body_force_braces := do_body_requires_braces(p, v.body, range_document)
 
 		set_source_position(p, v.body.pos)
-		document = cons_with_nopl(document, visit_stmt(p, v.body))
+		document = cons_with_nopl(document, visit_stmt(p, v.body, .Generic, false, false, body_force_braces))
 		set_source_position(p, v.body.end)
 
-		if !p.config.convert_do {
+		if !p.config.convert_do && !body_force_braces {
 			document = enforce_fit_if_do(v.body, document)
 		}
 	case ^ast.Return_Stmt:
@@ -1304,9 +1315,10 @@ visit_stmt :: proc(
 		set_source_position(p, v.body.end)
 	case ^ast.When_Stmt:
 		document = cons(document, cons_with_nopl(text("when"), visit_expr(p, v.cond)))
+		body_force_braces := do_body_requires_braces(p, v.body, document)
 
 		set_source_position(p, v.body.pos)
-		document = cons_with_nopl(document, visit_stmt(p, v.body))
+		document = cons_with_nopl(document, visit_stmt(p, v.body, .Generic, false, false, body_force_braces))
 		set_source_position(p, v.body.end)
 
 		if v.else_stmt != nil {
@@ -1317,6 +1329,10 @@ visit_stmt :: proc(
 			set_source_position(p, v.else_stmt.pos)
 
 			document = cons_with_nopl(document, cons_with_nopl(text("else"), visit_stmt(p, v.else_stmt)))
+		}
+
+		if !p.config.convert_do && !body_force_braces {
+			document = enforce_fit_if_do(v.body, document)
 		}
 	case ^ast.Branch_Stmt:
 		document = cons(document, text(v.tok.text))
