@@ -299,10 +299,17 @@ try_build_package :: proc(pkg_name: string, required_name := "") {
 
 			ok := parse_file_with_allocator(&p, &file, context.allocator)
 
-			if !ok {
+			if !ok || file.syntax_error_count > 0 || file.pkg_decl == nil {
 				if !is_ols_builtin_file(fullpath) {
-					log.errorf("error in parse file for indexing %v", fullpath)
+					log.warnf(
+						"skipping symbol indexing for %v after parse failure (ok=%v, syntax_errors=%v, package_decl=%v)",
+						fullpath,
+						ok,
+						file.syntax_error_count,
+						file.pkg_decl != nil,
+					)
 				}
+				runtime.arena_free_all(&arena)
 				continue
 			}
 
