@@ -20,4 +20,12 @@ main :: proc() {
 	    ) {break}
 
 	if ready("ok", "ok", "ok", "ok") do return
+
+	when ODIN_OS == .Darwin &&
+	ODIN_OS == .Darwin &&
+	ODIN_OS == .Darwin &&
+	ODIN_OS == .Darwin &&
+	ODIN_OS == .Darwin &&
+	ODIN_OS == .Darwin &&
+	ODIN_OS == .Darwin {return}
 }

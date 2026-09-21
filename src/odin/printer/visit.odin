@@ -1324,14 +1324,11 @@ visit_stmt :: proc(
 		document = cons(document, text("defer"))
 		document = cons_with_nopl(document, visit_stmt(p, v.stmt))
 	case ^ast.When_Stmt:
-		when_do_group_id := "when_do_header" if !p.config.convert_do && block_uses_do(v.body) else ""
+		when_group_id := "when_header"
+		when_do_group_id := when_group_id if !p.config.convert_do && block_uses_do(v.body) else ""
 
 		when_header := cons_with_nopl(text("when"), visit_expr(p, v.cond))
-		if when_do_group_id != "" {
-			document = cons(document, group(when_header, Document_Group_Options{id = when_do_group_id}))
-		} else {
-			document = cons(document, when_header)
-		}
+		document = cons(document, group(when_header, Document_Group_Options{id = when_group_id}))
 
 		set_source_position(p, v.body.pos)
 		document = cons_with_nopl(document, visit_stmt(p, v.body, do_group_id = when_do_group_id))
