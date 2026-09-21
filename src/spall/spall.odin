@@ -49,8 +49,8 @@ thread_end :: proc () {
 		delete(spall_buffer.data, runtime.default_allocator())
 	}
 }
-@(no_instrumentation, deferred_none=thread_end, disabled=!SPALL_ENABLED)
-thread :: proc (name: string = "", loc:= #caller_location) {
+@(no_instrumentation, disabled=!SPALL_ENABLED)
+thread :: proc (name: string = "", loc:= #caller_location) #scope_exit(.implicit, thread_end()) {
 	when SPALL_ENABLED {
 		thread_begin(name, loc)
 	}
@@ -68,8 +68,8 @@ trace_end :: proc "contextless" () {
 		spall._buffer_end(&spall_ctx, &spall_buffer)
 	}
 }
-@(no_instrumentation, deferred_none=trace_end, disabled=!SPALL_ENABLED)
-trace :: proc "contextless" (name: string, args: string = "", loc:= #caller_location) {
+@(no_instrumentation, disabled=!SPALL_ENABLED)
+trace :: proc "contextless" (name: string, args: string = "", loc:= #caller_location) #scope_exit(.implicit, trace_end()) {
 	when SPALL_ENABLED {
 		trace_begin(name, args, loc)
 	}

@@ -198,9 +198,8 @@ local_scope_deferred :: proc(data: ^FileResolveData, stmt: ^ast.Stmt) {
 	pop_local_group(data.ast_context)
 }
 
-@(deferred_in = local_scope_deferred)
 @(private = "file")
-local_scope :: proc(data: ^FileResolveData, stmt: ^ast.Stmt) {
+local_scope :: proc(data: ^FileResolveData, stmt: ^ast.Stmt) #scope_exit(.implicit, local_scope_deferred(data, stmt)) {
 	add_local_group(data.ast_context)
 
 	if stmt == nil {
@@ -225,8 +224,7 @@ local_scope_poly_deferred :: proc(data: ^FileResolveData, poly_params: ^ast.Fiel
 }
 
 @(private = "file")
-@(deferred_in = local_scope_poly_deferred)
-local_scope_poly :: proc(data: ^FileResolveData, poly_params: ^ast.Field_List) {
+local_scope_poly :: proc(data: ^FileResolveData, poly_params: ^ast.Field_List) #scope_exit(.implicit, local_scope_poly_deferred(data, poly_params)) {
 	add_local_group(data.ast_context)
 	get_locals_poly(data.ast_context.file, poly_params, data.ast_context)
 }
@@ -237,8 +235,7 @@ local_scope_enum_deferred :: proc(data: ^FileResolveData, enum_type: ^ast.Enum_T
 }
 
 @(private = "file")
-@(deferred_in = local_scope_enum_deferred)
-local_scope_enum :: proc(data: ^FileResolveData, enum_type: ^ast.Enum_Type) {
+local_scope_enum :: proc(data: ^FileResolveData, enum_type: ^ast.Enum_Type) #scope_exit(.implicit, local_scope_enum_deferred(data, enum_type)) {
 	add_local_group(data.ast_context)
 	get_locals_enum_fields(enum_type, data.ast_context, data.position_context)
 }
