@@ -99,19 +99,25 @@ when_file_tag_resolves_sibling_config_constant :: proc(t: ^testing.T) {
 	if !testing.expect(t, err == nil) do return
 
 	config_path, _ := filepath.join({root, "z_config.odin"}, context.temp_allocator)
-	if !testing.expect(t, os.write_entire_file(config_path, "package when_tag_test\nENABLED :: #config(ENABLED, true)\nDISABLED :: #config(DISABLED, false)") == nil) do return
+	if !testing.expect(t, os.write_entire_file(config_path, "package when_tag_test\nENABLED :: #config(ENABLED, true)\nDISABLED :: #config(DISABLED, false)\nLATER :: true") == nil) do return
+	chain_path, _ := filepath.join({root, "b_chain.odin"}, context.temp_allocator)
+	if !testing.expect(t, os.write_entire_file(chain_path, "package when_tag_test\nCHAIN :: LATER") == nil) do return
 
 	server.setup_index(server.get_builtin_path())
 	defer server.free_index()
 
 	active_path, _ := filepath.join({root, "a_active.odin"}, context.temp_allocator)
 	inactive_path, _ := filepath.join({root, "b_inactive.odin"}, context.temp_allocator)
+	chained_path, _ := filepath.join({root, "c_chained.odin"}, context.temp_allocator)
 	server.index_file(common.create_uri(active_path, context.temp_allocator), "#+when ENABLED\npackage when_tag_test\nActive :: 1")
 	server.index_file(common.create_uri(inactive_path, context.temp_allocator), "#+when DISABLED\npackage when_tag_test\nInactive :: 1")
+	server.index_file(common.create_uri(chained_path, context.temp_allocator), "#+when CHAIN\npackage when_tag_test\nChained :: 1")
 	_, found := server.lookup("Active", root, active_path)
 	testing.expect(t, found)
 	_, found = server.lookup("Inactive", root, inactive_path)
 	testing.expect(t, !found)
+	_, found = server.lookup("Chained", root, chained_path)
+	testing.expect(t, found)
 
 	source := "#+when DISABLED\npackage when_tag_test\ninvalid code"
 	arena: virtual.Arena
