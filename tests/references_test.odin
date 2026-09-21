@@ -1,5 +1,7 @@
 package tests
 
+import "core:os"
+import "core:path/filepath"
 import "core:testing"
 
 import "src:common"
@@ -28,6 +30,46 @@ reference_candidate_skips_unrelated_package :: proc(t: ^testing.T) {
 		"/repo/app/main.odin", "/repo/lib/math",
 		"package app\nuse :: proc() { Target() }",
 	))
+}
+
+@(test)
+reference_candidate_cache_reuses_and_invalidates_scan :: proc(t: ^testing.T) {
+	root, err := os.make_directory_temp("", "ols-reference-cache-*", context.temp_allocator)
+	if !testing.expect(t, err == nil) do return
+	defer os.remove_all(root)
+	lib, _ := filepath.join({root, "lib"}, context.temp_allocator)
+	app, _ := filepath.join({root, "app"}, context.temp_allocator)
+	if !testing.expect(t, os.make_directory(lib) == nil) do return
+	if !testing.expect(t, os.make_directory(app) == nil) do return
+	file, _ := filepath.join({app, "main.odin"}, context.temp_allocator)
+	source := "package app\nimport \"../lib\"\n"
+	if !testing.expect(t, os.write_entire_file(file, source) == nil) do return
+	testing.expect(t, server.source_may_reference_package(file, lib, source))
+
+	old_folders := common.config.workspace_folders
+	common.config.workspace_folders = make([dynamic]common.WorkspaceFolder, context.temp_allocator)
+	append(&common.config.workspace_folders, common.WorkspaceFolder{uri = common.create_uri(root, context.temp_allocator).uri})
+	defer {
+		server.reference_candidate_cache_reset()
+		common.config.workspace_folders = old_folders
+	}
+
+	first := make(map[string]struct{}, context.temp_allocator)
+	server.collect_workspace_reference_candidates(lib, &first)
+	_, found := first[file]
+	testing.expect(t, found)
+
+	if !testing.expect(t, os.write_entire_file(file, "package app\n") == nil) do return
+	cached := make(map[string]struct{}, context.temp_allocator)
+	server.collect_workspace_reference_candidates(lib, &cached)
+	_, found = cached[file]
+	testing.expect(t, found)
+
+	server.reference_candidate_cache_reset()
+	refreshed := make(map[string]struct{}, context.temp_allocator)
+	server.collect_workspace_reference_candidates(lib, &refreshed)
+	_, found = refreshed[file]
+	testing.expect(t, !found)
 }
 
 @(test)

@@ -285,6 +285,7 @@ try_build_package :: proc(pkg_name: string) {
 }
 
 remove_index_file :: proc(uri: common.Uri) -> common.Error {
+	reference_candidate_cache_reset()
 	ok: bool
 	defer clear_index_cache()
 
@@ -319,6 +320,7 @@ remove_index_file :: proc(uri: common.Uri) -> common.Error {
 }
 
 index_file :: proc(uri: common.Uri, text: string) -> common.Error {
+	reference_candidate_cache_reset()
 	ok: bool
 	defer clear_index_cache()
 
@@ -406,8 +408,9 @@ index_file :: proc(uri: common.Uri, text: string) -> common.Error {
 
 
 setup_index :: proc(builtin_path: string) {
-	build_cache.loaded_pkgs = make(map[string]PackageCacheInfo, 50)
-	symbol_collection := make_symbol_collection(&common.config)
+	reference_candidate_cache_reset()
+	build_cache.loaded_pkgs = make(map[string]PackageCacheInfo, 50, context.allocator)
+	symbol_collection := make_symbol_collection(&common.config, context.allocator)
 	indexer.index = make_memory_index(symbol_collection)
 
 	try_build_package(builtin_path)
