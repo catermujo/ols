@@ -404,7 +404,11 @@ visit_node :: proc(node: ^ast.Node, builder: ^SemanticTokenBuilder) {
 	case ^ast.Proc_Lit:
 		visit_proc_type(n.type, builder)
 		visit_nodes(n.where_clauses, builder)
+		visit_node(n.scope_exit_contract, builder)
 		visit_node(n.body, builder)
+	case ^ast.Scope_Exit:
+		visit_node(n.policy, builder)
+		visit_node(n.cleanup, builder)
 	case ^ast.Proc_Group:
 		visit_nodes(n.args, builder)
 	case ^ast.Bit_Field_Type:

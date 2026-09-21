@@ -3,8 +3,32 @@ package tests
 import "core:testing"
 
 import "src:common"
+import "src:server"
 
 import test "src:testing"
+
+@(test)
+reference_candidate_same_package :: proc(t: ^testing.T) {
+	testing.expect(t, server.source_may_reference_package(
+		"/repo/pkg/main.odin", "/repo/pkg", "package pkg\nuse :: proc() { Target() }",
+	))
+}
+
+@(test)
+reference_candidate_relative_import :: proc(t: ^testing.T) {
+	testing.expect(t, server.source_may_reference_package(
+		"/repo/app/main.odin", "/repo/lib/math",
+		"package app\nimport math \"../lib/math\"\nuse :: proc() { math.Target() }",
+	))
+}
+
+@(test)
+reference_candidate_skips_unrelated_package :: proc(t: ^testing.T) {
+	testing.expect(t, !server.source_may_reference_package(
+		"/repo/app/main.odin", "/repo/lib/math",
+		"package app\nuse :: proc() { Target() }",
+	))
+}
 
 @(test)
 reference_enum_value_initialize_rhs :: proc(t: ^testing.T) {
