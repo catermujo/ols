@@ -52,7 +52,12 @@ existing when evaluator are registered (defines, literals, !, &&, ||,
 parens, string compares). Unknown idents still default to false bool.
 Profile defines win over package names.
 */
-register_when_const :: proc(when_expr_map: ^map[string]When_Expr, name: string, value: ^ast.Expr) {
+register_when_const :: proc(
+	when_expr_map: ^map[string]When_Expr,
+	name: string,
+	value: ^ast.Expr,
+	defer_unknown := false,
+) {
 	if name == "" || value == nil {
 		return
 	}
@@ -60,7 +65,7 @@ register_when_const :: proc(when_expr_map: ^map[string]When_Expr, name: string, 
 		return
 	}
 
-	resolved, ok := resolve_when_expr(when_expr_map^, value)
+	resolved, ok := resolve_when_expr(when_expr_map^, value, defer_unknown)
 	if !ok {
 		return
 	}
@@ -81,6 +86,7 @@ register_when_consts_from_value_decl :: proc(
 	when_expr_map: ^map[string]When_Expr,
 	file: ast.File,
 	value_decl: ^ast.Value_Decl,
+	defer_unknown := false,
 ) {
 	if value_decl == nil || value_decl.is_mutable {
 		return
@@ -91,7 +97,7 @@ register_when_consts_from_value_decl :: proc(
 			continue
 		}
 		name_str := get_ast_node_string(name, file.src)
-		register_when_const(when_expr_map, name_str, value_decl.values[i])
+		register_when_const(when_expr_map, name_str, value_decl.values[i], defer_unknown)
 	}
 }
 
@@ -130,7 +136,7 @@ register_when_consts_from_file :: proc(when_expr_map: ^map[string]When_Expr, fil
 		before := len(when_expr_map)
 		for decl in file.decls {
 			if value_decl, ok := decl.derived.(^ast.Value_Decl); ok {
-				register_when_consts_from_value_decl(when_expr_map, file, value_decl)
+				register_when_consts_from_value_decl(when_expr_map, file, value_decl, defer_unknown = true)
 			}
 		}
 		if len(when_expr_map) == before do break
@@ -248,7 +254,7 @@ file_when_tags_exclude :: proc(source, fullpath: string) -> bool {
 	return false
 }
 
-resolve_when_ident :: proc(when_expr_map: map[string]When_Expr, ident: string) -> (When_Expr, bool) {
+resolve_when_ident :: proc(when_expr_map: map[string]When_Expr, ident: string, defer_unknown := false) -> (When_Expr, bool) {
 	switch ident {
 	case "ODIN_OS":
 		if common.config.profile.os != "" {
@@ -274,7 +280,7 @@ resolve_when_ident :: proc(when_expr_map: map[string]When_Expr, ident: string) -
 		// Fully resolve stored AST fragments (if any) so conditions see scalars.
 		#partial switch v in value {
 		case ^ast.Expr:
-			return resolve_when_expr(when_expr_map, v)
+			return resolve_when_expr(when_expr_map, v, defer_unknown)
 		}
 		return value, true
 	}
@@ -290,6 +296,7 @@ resolve_when_ident :: proc(when_expr_map: map[string]When_Expr, ident: string) -
 		}
 	}
 
+	if defer_unknown && !strings.has_prefix(ident, "ODIN_") do return {}, false
 	//If nothing is found we return it as false boolean
 	return false, true
 }
@@ -297,6 +304,7 @@ resolve_when_ident :: proc(when_expr_map: map[string]When_Expr, ident: string) -
 resolve_when_expr :: proc(
 	when_expr_map: map[string]When_Expr,
 	when_expr: When_Expr,
+	defer_unknown := false,
 ) -> (
 	_when_expr: When_Expr,
 	ok: bool,
@@ -312,34 +320,34 @@ resolve_when_expr :: proc(
 	case ^ast.Expr:
 		#partial switch odin_expr in expr.derived {
 		case ^ast.Paren_Expr:
-			return resolve_when_expr(when_expr_map, odin_expr.expr)
+			return resolve_when_expr(when_expr_map, odin_expr.expr, defer_unknown)
 		case ^ast.Ident:
-			return resolve_when_ident(when_expr_map, odin_expr.name)
+			return resolve_when_ident(when_expr_map, odin_expr.name, defer_unknown)
 		case ^ast.Basic_Lit:
-			return resolve_when_ident(when_expr_map, odin_expr.tok.text)
+			return resolve_when_ident(when_expr_map, odin_expr.tok.text, defer_unknown)
 		case ^ast.Call_Expr:
 			if directive, ok := odin_expr.expr.derived.(^ast.Basic_Directive); ok &&
 			   directive.name == "config" && len(odin_expr.args) == 2 {
 				if name, ok := odin_expr.args[0].derived.(^ast.Ident); ok {
 					if value, exists := when_expr_map[name.name]; exists do return value, true
-					return resolve_when_expr(when_expr_map, odin_expr.args[1])
+					return resolve_when_expr(when_expr_map, odin_expr.args[1], defer_unknown)
 				}
 			}
 		case ^ast.Implicit_Selector_Expr:
 			return odin_expr.field.name, true
 		case ^ast.Unary_Expr:
 			if odin_expr.op.kind == .Not {
-				expr := resolve_when_expr(when_expr_map, odin_expr.expr) or_return
+				expr := resolve_when_expr(when_expr_map, odin_expr.expr, defer_unknown) or_return
 				b := expr.(bool) or_return
 				return !b, true
 			}
 		case ^ast.Binary_Expr:
-			lhs := resolve_when_expr(when_expr_map, odin_expr.left) or_return
+			lhs := resolve_when_expr(when_expr_map, odin_expr.left, defer_unknown) or_return
 			if lhs_bool, ok := lhs.(bool); ok {
 				if odin_expr.op.kind == .Cmp_And && !lhs_bool do return false, true
 				if odin_expr.op.kind == .Cmp_Or && lhs_bool do return true, true
 			}
-			rhs := resolve_when_expr(when_expr_map, odin_expr.right) or_return
+			rhs := resolve_when_expr(when_expr_map, odin_expr.right, defer_unknown) or_return
 
 			lhs_bool, lhs_is_bool := lhs.(bool)
 			rhs_bool, rhs_is_bool := rhs.(bool)
