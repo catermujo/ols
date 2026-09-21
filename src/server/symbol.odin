@@ -93,6 +93,7 @@ SymbolProcedureValue :: struct {
 	attributes:         []^ast.Attribute,
 	inlining:           ast.Proc_Inlining,
 	where_clauses:      []^ast.Expr,
+	scope_exit_contract: ^ast.Scope_Exit,
 }
 
 SymbolProcedureGroupValue :: struct {
@@ -863,6 +864,7 @@ free_symbol :: proc(symbol: Symbol, allocator: mem.Allocator) {
 		free_ast(v.arg_types, allocator)
 		free_ast(v.attributes, allocator)
 		free_ast(v.where_clauses, allocator)
+		free_ast(v.scope_exit_contract, allocator)
 	case SymbolStructValue:
 		delete(v.names, allocator)
 		delete(v.ranges, allocator)

@@ -140,6 +140,7 @@ collect_procedure_fields :: proc(
 	attributes: []^ast.Attribute,
 	inlining: ast.Proc_Inlining,
 	where_clauses: []^ast.Expr,
+	scope_exit_contract: ^ast.Scope_Exit,
 ) -> SymbolProcedureValue {
 	spall.trace(#procedure)
 
@@ -168,6 +169,13 @@ collect_procedure_fields :: proc(
 		append(&attrs, cloned)
 	}
 
+	cloned_scope_exit_contract := cast(^ast.Scope_Exit)clone_type(
+		scope_exit_contract,
+		collection.allocator,
+		&collection.unique_strings,
+	)
+	replace_package_alias(cloned_scope_exit_contract, package_map, collection)
+
 	value := SymbolProcedureValue {
 		return_types       = returns[:],
 		orig_return_types  = returns[:],
@@ -184,6 +192,7 @@ collect_procedure_fields :: proc(
 		attributes         = attrs[:],
 		inlining           = inlining,
 		where_clauses      = clone_array(where_clauses, collection.allocator, &collection.unique_strings),
+		scope_exit_contract = cloned_scope_exit_contract,
 	}
 
 	return value
@@ -947,6 +956,7 @@ collect_symbols :: proc(collection: ^SymbolCollection, file: ast.File, uri: stri
 					expr.attributes,
 					v.inlining,
 					v.where_clauses,
+					v.scope_exit_contract,
 				)
 			}
 
@@ -967,6 +977,7 @@ collect_symbols :: proc(collection: ^SymbolCollection, file: ast.File, uri: stri
 				package_map,
 				expr.attributes,
 				.None,
+				nil,
 				nil,
 			)
 		case ^ast.Proc_Group:
@@ -1380,6 +1391,12 @@ replace_package_alias_node :: proc(node: ^ast.Node, package_map: map[string]stri
 	case ^ast.Helper_Type:
 		replace_package_alias(n.type, package_map, collection)
 	case ^ast.Proc_Lit:
+		replace_package_alias(n.type, package_map, collection)
+		replace_package_alias(n.where_clauses, package_map, collection)
+		replace_package_alias(n.scope_exit_contract, package_map, collection)
+	case ^ast.Scope_Exit:
+		replace_package_alias(n.policy, package_map, collection)
+		replace_package_alias(n.cleanup, package_map, collection)
 	case ^ast.Multi_Pointer_Type:
 		replace_package_alias(n.elem, package_map, collection)
 	case ^ast.Bit_Field_Type:

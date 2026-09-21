@@ -261,7 +261,9 @@ try_build_package :: proc(pkg_name: string) {
 
 			ok := parse_file(&p, &file)
 
-			if !ok || file.syntax_error_count > 0 || file.pkg_decl == nil {
+			// OLS builtin stubs intentionally contain declarations the parser cannot fully check.
+			if !ok || (!is_ols_builtin_file(fullpath) &&
+			   (file.syntax_error_count > 0 || file.pkg_decl == nil)) {
 				if !is_ols_builtin_file(fullpath) {
 					log.warnf("skipping symbol indexing for %v after parse failure", fullpath)
 				}

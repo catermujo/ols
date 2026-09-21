@@ -1960,7 +1960,7 @@ internal_resolve_type_expression :: proc(ast_context: ^AstContext, node: ^ast.Ex
 		return ok
 	case ^ast.Proc_Type:
 		out^, ok =
-			make_symbol_procedure_from_ast(ast_context, node, v^, ast_context.field_name.name, {}, true, .None, nil),
+			make_symbol_procedure_from_ast(ast_context, node, v^, ast_context.field_name.name, {}, true, .None, nil, nil),
 			true
 		return ok
 	case ^ast.Bit_Field_Type:
@@ -2059,6 +2059,7 @@ internal_resolve_type_expression :: proc(ast_context: ^AstContext, node: ^ast.Ex
 				true,
 				.None,
 				nil,
+				v.scope_exit_contract,
 			),
 			true
 		return ok
@@ -3000,6 +3001,7 @@ resolve_proc_lit :: proc(
 		type,
 		proc_lit.inlining,
 		proc_lit.where_clauses,
+		proc_lit.scope_exit_contract,
 	)
 
 	if is_procedure_generic(proc_lit.type) {
@@ -4462,6 +4464,7 @@ make_symbol_procedure_from_ast :: proc(
 	type: bool,
 	inlining: ast.Proc_Inlining,
 	where_clauses: []^ast.Expr,
+	scope_exit_contract: ^ast.Scope_Exit,
 ) -> Symbol {
 	pkg := ""
 	if n != nil {
@@ -4508,6 +4511,7 @@ make_symbol_procedure_from_ast :: proc(
 		attributes         = attributes,
 		inlining           = inlining,
 		where_clauses      = where_clauses,
+		scope_exit_contract = scope_exit_contract,
 	}
 
 	if _, ok := get_attribute_objc_name(attributes, name); ok {

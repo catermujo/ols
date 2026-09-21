@@ -703,6 +703,10 @@ resolve_generic_function_symbol :: proc(
 	}
 
 
+	scope_exit_contract: ^ast.Scope_Exit
+	if value, ok := proc_symbol.value.(SymbolProcedureValue); ok {
+		scope_exit_contract = value.scope_exit_contract
+	}
 	symbol := proc_symbol
 	symbol.value = SymbolProcedureValue {
 		return_types      = return_types[:],
@@ -710,6 +714,7 @@ resolve_generic_function_symbol :: proc(
 		orig_arg_types    = params[:],
 		orig_return_types = results[:],
 		inlining          = inlining,
+		scope_exit_contract = scope_exit_contract,
 	}
 
 	return symbol, true

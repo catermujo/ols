@@ -59,9 +59,10 @@ queue_check_request :: proc(mode: Check_Mode, path: string, config: ^common.Conf
 		return
 	}
 	path := strings.clone(path, checker.allocator)
-	ok := chan.send(checker.send, Check_Request{check_mode = mode, path = path, config = config})
+	ok := chan.try_send(checker.send, Check_Request{check_mode = mode, path = path, config = config})
 	if !ok {
-		log.errorf("Failed to queue check request for path %q", path)
+		log.warnf("Dropped check request for path %q because the queue is full", path)
+		delete(path, checker.allocator)
 	}
 }
 

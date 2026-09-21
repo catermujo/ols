@@ -134,7 +134,14 @@ resolve_entire_file_for_references :: proc(
 
 	symbols = make(SymbolAndNodeMap, 10000, allocator)
 
+	previous_end := 0
 	for decl in document.ast.decls {
+		end := min(decl.end.offset + 1, len(document.ast.src))
+		start := max(0, min(previous_end, end))
+		previous_end = max(previous_end, decl.end.offset)
+		if target_name != "" && !strings.contains(document.ast.src[start:end], target_name) {
+			continue
+		}
 		resolve_decl(
 			&position_context,
 			&ast_context,
@@ -422,7 +429,11 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 
 		append(&data.position_context.functions, data.position_context.function)
 
+		resolve_node(n.scope_exit_contract, data)
 		resolve_node(n.body, data)
+	case ^ast.Scope_Exit:
+		resolve_node(n.policy, data)
+		resolve_node(n.cleanup, data)
 	case ^ast.Unroll_Range_Stmt:
 		local_scope(data, n)
 		resolve_node(n.val0, data)
