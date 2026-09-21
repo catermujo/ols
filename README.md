@@ -81,6 +81,8 @@ Options:
 
 - `enable_overload_resolution`: Enable go-to-definition to resolve overloaded procedures from procedure groups based on call arguments.
 
+- `enable_definition_skip_aliases`: Make go-to-definition follow direct and chained aliases to their underlying named declaration. _(Disabled by default)_
+
 - `enable_references`: Turns on finding references for a symbol. _(Enabled by default)_
 
 - `enable_document_highlights`: Turns on highlighting of symbol references in file. _(Enabled by default)_

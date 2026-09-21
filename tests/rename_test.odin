@@ -104,6 +104,22 @@ ast_prepare_rename_struct :: proc (t: ^testing.T) {
 }
 
 @(test)
+ast_prepare_rename_alias_with_definition_skip :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+Target :: struct {}
+Alias :: Target
+main :: proc() {
+x := Ali{*}as{}
+}
+`,
+		config = {enable_definition_skip_aliases = true},
+	}
+
+	test.expect_prepare_rename_range(t, &source, {{line = 4, character = 5}, {line = 4, character = 10}})
+}
+
+@(test)
 ast_prepare_rename_struct_field_type :: proc (t: ^testing.T) {
 	source := test.Source {
 		main     = `package test

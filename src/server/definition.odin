@@ -84,6 +84,145 @@ count_source_lines :: proc(text: []u8) -> int {
 	return lines
 }
 
+get_definition_alias_symbol :: proc(
+	ast_context: ^AstContext,
+	name: string,
+	pkg: string,
+	fallback: Symbol,
+) -> (Symbol, bool) {
+	if name == "" {
+		return fallback, false
+	}
+
+	if symbol, ok := lookup(name, pkg, ast_context.fullpath); ok {
+		return symbol, true
+	}
+
+	if pkg == ast_context.document_package {
+		if global, ok := ast_context.globals[name]; ok {
+			result := fallback
+			result.name = name
+			result.pkg = pkg
+			result.range = common.get_token_range(global.name_expr, ast_context.file.src)
+			result.uri = common.create_uri(global.name_expr.pos.file, ast_context.allocator).uri
+			result.type_expr = global.type_expr
+			result.value_expr = global.value_expr
+			if global.value_expr != nil {
+				#partial switch expr in global.value_expr.derived {
+				case ^ast.Ident, ^ast.Selector_Expr:
+					result.value = SymbolGenericValue{expr = global.value_expr}
+				case ^ast.Distinct_Type:
+					result.value = SymbolGenericValue{expr = global.value_expr}
+					result.flags |= {.Distinct}
+				}
+			}
+			return result, true
+		}
+	}
+
+	return fallback, false
+}
+
+get_definition_alias_target :: proc(ast_context: ^AstContext, symbol: Symbol) -> (Symbol, bool) {
+	expr := symbol.value_expr
+	if expr == nil {
+		if value, ok := symbol.value.(SymbolGenericValue); ok {
+			expr = value.expr
+		}
+	}
+	if expr == nil {
+		return {}, false
+	}
+
+	#partial switch expr in expr.derived {
+	case ^ast.Ident:
+		return get_definition_alias_symbol(ast_context, expr.name, symbol.pkg, symbol)
+	case ^ast.Selector_Expr:
+		if expr.field == nil {
+			return {}, false
+		}
+		field, ok := expr.field.derived.(^ast.Ident)
+		if !ok {
+			return {}, false
+		}
+		base, base_ok := resolve_type_expression(ast_context, expr.expr)
+		if !base_ok {
+			return {}, false
+		}
+		if _, ok := base.value.(SymbolPackageValue); !ok {
+			return {}, false
+		}
+		return get_definition_alias_symbol(ast_context, field.name, base.pkg, symbol)
+	}
+
+	return {}, false
+}
+
+skip_definition_aliases :: proc(ast_context: ^AstContext, symbol: Symbol, name: string) -> Symbol {
+	current, ok := get_definition_alias_symbol(ast_context, name, symbol.pkg, symbol)
+	if !ok {
+		return symbol
+	}
+
+	visited := make(map[string]struct{}, context.temp_allocator)
+	defer delete(visited)
+
+	for {
+		key := fmt.tprintf("%s:%s", current.pkg, current.name)
+		if key in visited {
+			return symbol
+		}
+		visited[key] = {}
+
+		if .Distinct in current.flags {
+			return symbol
+		}
+		alias_expr := current.value_expr
+		if alias_expr == nil {
+			if value, ok := current.value.(SymbolGenericValue); ok {
+				alias_expr = value.expr
+			}
+		}
+		if alias_expr == nil {
+			return current
+		}
+		#partial switch _ in alias_expr.derived {
+		case ^ast.Ident, ^ast.Selector_Expr:
+		case:
+			return current
+		}
+
+		target, ok := get_definition_alias_target(ast_context, current)
+		if !ok {
+			return symbol
+		}
+
+		target_key := fmt.tprintf("%s:%s", target.pkg, target.name)
+		if target_key in visited {
+			return symbol
+		}
+
+		target_expr := target.value_expr
+		if target_expr == nil {
+			if value, ok := target.value.(SymbolGenericValue); ok {
+				target_expr = value.expr
+			}
+		}
+		is_alias := false
+		if target_expr != nil {
+			#partial switch _ in target_expr.derived {
+			case ^ast.Ident, ^ast.Selector_Expr:
+				is_alias = true
+			}
+		}
+		if !is_alias || .Distinct in target.flags {
+			return target
+		}
+
+		current = target
+	}
+}
+
 sanitize_location_ranges :: proc(document: ^Document, locations: ^[dynamic]common.Location) {
 	for i in 0 ..< len(locations^) {
 		loc := &locations[i]
@@ -174,6 +313,11 @@ get_definition_location :: proc(document: ^Document, position: common.Position, 
 		}
 
 		if resolved, ok := resolve_location_selector(&ast_context, position_context.selector_expr); ok {
+			if config.enable_definition_skip_aliases {
+				selector := position_context.selector_expr.derived.(^ast.Selector_Expr)
+				field := selector.field.derived.(^ast.Ident)
+				resolved = skip_definition_aliases(&ast_context, resolved, field.name)
+			}
 			if config.enable_overload_resolution {
 				resolved = try_resolve_proc_group_overload(
 					&ast_context,
@@ -221,6 +365,10 @@ get_definition_location :: proc(document: ^Document, position: common.Position, 
 			&ast_context,
 			position_context.identifier.derived.(^ast.Ident)^,
 		); ok {
+			if config.enable_definition_skip_aliases {
+				ident := position_context.identifier.derived.(^ast.Ident)
+				resolved = skip_definition_aliases(&ast_context, resolved, ident.name)
+			}
 			if config.enable_overload_resolution {
 				resolved = try_resolve_proc_group_overload(&ast_context, &position_context, resolved)
 			}

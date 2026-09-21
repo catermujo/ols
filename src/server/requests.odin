@@ -532,6 +532,8 @@ read_ols_initialize_options :: proc(config: ^common.Config, ols_config: OlsConfi
 	config.enable_fake_method = ols_config.enable_fake_methods.(bool) or_else config.enable_fake_method
 	config.enable_overload_resolution =
 		ols_config.enable_overload_resolution.(bool) or_else config.enable_overload_resolution
+	config.enable_definition_skip_aliases =
+		ols_config.enable_definition_skip_aliases.(bool) or_else config.enable_definition_skip_aliases
 
 	// Delete overriding collections.
 	for it in ols_config.collections {

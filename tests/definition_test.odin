@@ -855,6 +855,105 @@ x := Qu{*}x{foo = 1}
 }
 
 @(test)
+ast_goto_alias_skip :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+Target :: struct {}
+Alias :: Target
+Chain :: Alias
+main :: proc() {
+x := Ch{*}ain{}
+}
+`,
+		config = {enable_definition_skip_aliases = true},
+	}
+	test.expect_definition_locations(t, &source, {{range = {{line = 1, character = 0}, {line = 1, character = 6}}}})
+}
+
+@(test)
+ast_goto_alias_skip_disabled :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+Target :: struct {}
+Alias :: Target
+Chain :: Alias
+main :: proc() {
+x := Ch{*}ain{}
+}
+`,
+	}
+	test.expect_definition_locations(t, &source, {{range = {{line = 3, character = 0}, {line = 3, character = 5}}}})
+}
+
+@(test)
+ast_goto_imported_alias_skip :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+import dep "dep"
+main :: proc() {
+x := dep.Al{*}ias{}
+}
+`,
+		packages = {{
+			pkg = "dep",
+			source = `package dep
+Target :: struct {}
+Alias :: Target
+`,
+		}},
+		config = {enable_definition_skip_aliases = true},
+	}
+	test.expect_definition_locations(t, &source, {{
+		uri = "file://test/dep/package.odin",
+		range = {{line = 1, character = 0}, {line = 1, character = 6}},
+	}})
+}
+
+@(test)
+ast_goto_alias_skip_stops :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+Target :: struct {}
+Distinct :: distinct Target
+main :: proc() {
+a := Di{*}stinct{}
+}
+`,
+		config = {enable_definition_skip_aliases = true},
+	}
+	test.expect_definition_locations(t, &source, {{range = {{line = 2, character = 0}, {line = 2, character = 8}}}})
+}
+
+@(test)
+ast_goto_alias_skip_unresolved :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+Alias :: Missing
+main :: proc() {
+x := Al{*}ias{}
+}
+`,
+		config = {enable_definition_skip_aliases = true},
+	}
+	test.expect_definition_locations(t, &source, {{range = {{line = 1, character = 0}, {line = 1, character = 5}}}})
+}
+
+@(test)
+ast_goto_alias_skip_cycle :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+Cycle_A :: Cycle_B
+Cycle_B :: Cycle_A
+main :: proc() {
+x := Cy{*}cle_A{}
+}
+`,
+		config = {enable_definition_skip_aliases = true},
+	}
+	test.expect_definition_locations(t, &source, {{range = {{line = 1, character = 0}, {line = 1, character = 7}}}})
+}
+
+@(test)
 ast_goto_proc_default_implicit_enum_member :: proc(t: ^testing.T) {
 	source := test.Source {
 		main = `package test
