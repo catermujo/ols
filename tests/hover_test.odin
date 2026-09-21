@@ -6246,6 +6246,16 @@ ast_hover_directives_config_info :: proc(t: ^testing.T) {
 }
 
 @(test)
+ast_hover_directives_trigger_location :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+		#assert(true, #trigger_{*}location)
+		`,
+	}
+	test.expect_hover(t, &source, "#trigger_location\n\nUse `#trigger_location` as the optional location argument to `#assert` or `#panic`. If the check fails, the compiler reports the use or import that triggered it. If there is no trigger, it reports the call site.")
+}
+
+@(test)
 ast_hover_proc_group_bitset :: proc(t: ^testing.T) {
 	source := test.Source {
 		main = `package test
