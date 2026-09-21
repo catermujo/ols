@@ -1,6 +1,8 @@
 package tests
 
+import "core:fmt"
 import "core:log"
+import "core:os"
 import "core:testing"
 import "src:common"
 
@@ -27,6 +29,25 @@ common_get_absolute_range_starting_newline :: proc(t: ^testing.T) {
 	if absolute_range != {0, 1} {
 		log.error(t, "incorrect absolute_range", absolute_range, ok)
 	}
+}
+
+@(test)
+common_home_uri_expands_to_home_path :: proc(t: ^testing.T) {
+	when ODIN_OS == .Windows {
+		return
+	}
+	home := os.get_env("HOME", context.temp_allocator)
+	if home == "" {
+		return
+	}
+	expected := common.create_uri(fmt.tprintf("%s/ols-uri-test.odin", home), context.temp_allocator)
+	created := common.create_uri("~/ols-uri-test.odin", context.temp_allocator)
+	parsed, ok := common.parse_uri("file:///~/ols-uri-test.odin", context.temp_allocator)
+	testing.expect(t, ok)
+	testing.expect_value(t, created.uri, expected.uri)
+	testing.expect_value(t, created.path, expected.path)
+	testing.expect_value(t, parsed.uri, expected.uri)
+	testing.expect_value(t, parsed.path, expected.path)
 }
 
 @(test)

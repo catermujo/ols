@@ -17,15 +17,17 @@ Uri :: struct {
 //Note(Daniel, This is an extremely incomplete uri parser and for now ignores fragment and query and only handles file schema)
 parse_uri :: proc(value: string, allocator: mem.Allocator) -> (Uri, bool) {
 	uri: Uri
-	starts := "file:///"
+	starts := "file://"
 
 	start_index := len(starts)
 	if !starts_with(value, starts) {
 		return {}, false
 	}
 
-	when ODIN_OS != .Windows {
-		start_index -= 1
+	if starts_with(value, "file:///") {
+		when ODIN_OS == .Windows {
+			start_index = len("file:///")
+		}
 	}
 
 	return create_uri(value[start_index:], allocator), true
@@ -36,7 +38,14 @@ create_uri :: proc(path: string, allocator: mem.Allocator) -> Uri {
 
 	spall.trace(#procedure, path)
 
-	path_forward, _ := filepath.replace_separators(path, '/', context.temp_allocator)
+	normalized_path := path
+	when ODIN_OS != .Windows {
+		if strings.has_prefix(normalized_path, "/~") {
+			normalized_path = normalized_path[1:]
+		}
+	}
+	normalized_path, _ = resolve_home_dir(normalized_path, context.temp_allocator)
+	path_forward, _ := filepath.replace_separators(normalized_path, '/', context.temp_allocator)
 
 	builder := strings.builder_make(allocator)
 
@@ -64,8 +73,13 @@ uri_to_path :: proc(uri: string, allocator: mem.Allocator) -> string {
 	when ODIN_OS == .Windows {
 		// file:///C:/foo -> /C:/foo after trim, strip leading /
 		path = strings.trim_prefix(path, "/")
+	} else {
+		if strings.has_prefix(path, "/~") {
+			path = path[1:]
+		}
 	}
-	return strings.clone(path, allocator)
+	path, _ = resolve_home_dir(path, allocator)
+	return path
 }
 
 delete_uri :: proc(uri: Uri, allocator := context.allocator, loc := #caller_location) {
