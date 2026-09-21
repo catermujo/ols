@@ -592,16 +592,19 @@ collect_globals :: proc(file: ast.File) -> []GlobalExpr {
 	spall.trace(#procedure, file.fullpath)
 
 	file_tags := parser.parse_file_tags(file, context.temp_allocator)
-	if !should_collect_file(file_tags) {
-		return {}
+	tag_expr_map: map[string]When_Expr
+	if has_file_when_tag(file) {
+		tag_expr_map = make_when_expr_map()
+		register_when_consts_from_file(&tag_expr_map, file)
+		register_when_consts_from_package(&tag_expr_map, file)
 	}
+	if !should_collect_file(file_tags, file, tag_expr_map) do return {}
 
 	exprs := make([dynamic]GlobalExpr, context.temp_allocator)
 	defer shrink(&exprs)
 
 	// Declaration-order const fold for when conditions (e.g. MAP_ENABLED :: !ODIN_BEDROCK).
 	when_expr_map := make_when_expr_map()
-
 	for decl in file.decls {
 		if value_decl, ok := decl.derived.(^ast.Value_Decl); ok {
 			collect_value_decl(&exprs, file, file_tags, decl, {})

@@ -31,7 +31,8 @@ get_all_package_file_locations :: proc(
 
 	for match in matches {
 		if data, read_err := os.read_entire_file(match, runtime.default_allocator()); read_err == nil {
-			ignored := common.has_ignore_file_tag(string(data))
+			ignored := common.has_ignore_file_tag(string(data)) ||
+			           file_when_tags_exclude(string(data), match)
 			delete(data, runtime.default_allocator())
 			if ignored {
 				continue

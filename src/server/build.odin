@@ -144,7 +144,8 @@ append_packages :: proc(
 
 		if filepath.ext(info.name) == ".odin" {
 			if data, err := os.read_entire_file(info.fullpath, runtime.default_allocator()); err == nil {
-				ignored := common.has_ignore_file_tag(string(data))
+				ignored := common.has_ignore_file_tag(string(data)) ||
+				           file_when_tags_exclude(string(data), info.fullpath)
 				delete(data, runtime.default_allocator())
 				if ignored {
 					continue
@@ -158,9 +159,13 @@ append_packages :: proc(
 	}
 }
 
-should_collect_file :: proc(file_tags: parser.File_Tags) -> bool {
+should_collect_file :: proc(file_tags: parser.File_Tags, file: ast.File, when_expr_map: map[string]When_Expr) -> bool {
 	if file_tags.ignore {
 		return false
+	}
+	for tag in file.tags {
+		condition, found := resolve_file_when_tag(tag.text, when_expr_map)
+		if found && !condition do return false
 	}
 
 	if len(file_tags.build) > 0 {
@@ -225,7 +230,7 @@ try_build_package :: proc(pkg_name: string) {
 				log.errorf("failed to read entire file for indexing %v: %v", fullpath, err)
 				continue
 			}
-			if common.has_ignore_file_tag(string(data)) {
+			if common.has_ignore_file_tag(string(data)) || file_when_tags_exclude(string(data), fullpath) {
 				continue
 			}
 
@@ -347,7 +352,7 @@ index_file :: proc(uri: common.Uri, text: string) -> common.Error {
 		src      = text,
 		pkg      = pkg,
 	}
-	ignored := common.has_ignore_file_tag(text)
+	ignored := common.has_ignore_file_tag(text) || file_when_tags_exclude(text, fullpath)
 
 	if !ignored {
 		allocator := context.allocator

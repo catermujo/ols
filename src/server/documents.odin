@@ -448,7 +448,8 @@ parse_document :: proc(document: ^Document, config: ^common.Config) -> ([]Parser
 		src      = string(document.text[:document.used_text]),
 		pkg      = pkg,
 	}
-	if common.has_ignore_file_tag(document.ast.src) {
+	if common.has_ignore_file_tag(document.ast.src) ||
+	   file_when_tags_exclude(document.ast.src, document.fullpath) {
 		document.imports = nil
 		return nil, true
 	}
