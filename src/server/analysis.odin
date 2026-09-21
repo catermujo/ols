@@ -114,8 +114,7 @@ set_ast_package_deferred :: proc(ast_context: ^AstContext, pkg: string) {
 	ast_context.current_package = ast_context.deferred_package[ast_context.deferred_count]
 }
 
-@(deferred_in = set_ast_package_deferred)
-set_ast_package_set_scoped :: proc(ast_context: ^AstContext, pkg: string) {
+set_ast_package_set_scoped :: proc(ast_context: ^AstContext, pkg: string) #scope_exit(.implicit, set_ast_package_deferred(ast_context, pkg)) {
 	if ast_context.deferred_count >= DeferredDepth {
 		return
 	}
@@ -132,8 +131,7 @@ set_ast_package_none_deferred :: proc(ast_context: ^AstContext) {
 	ast_context.current_package = ast_context.deferred_package[ast_context.deferred_count]
 }
 
-@(deferred_in = set_ast_package_none_deferred)
-set_ast_package_scoped :: proc(ast_context: ^AstContext) {
+set_ast_package_scoped :: proc(ast_context: ^AstContext) #scope_exit(.implicit, set_ast_package_none_deferred(ast_context)) {
 	if ast_context.deferred_count >= DeferredDepth {
 		return
 	}
@@ -149,8 +147,7 @@ set_ast_package_from_symbol_deferred :: proc(ast_context: ^AstContext, symbol: S
 	ast_context.current_package = ast_context.deferred_package[ast_context.deferred_count]
 }
 
-@(deferred_in = set_ast_package_from_symbol_deferred)
-set_ast_package_from_symbol_scoped :: proc(ast_context: ^AstContext, symbol: Symbol) {
+set_ast_package_from_symbol_scoped :: proc(ast_context: ^AstContext, symbol: Symbol) #scope_exit(.implicit, set_ast_package_from_symbol_deferred(ast_context, symbol)) {
 	if ast_context.deferred_count >= DeferredDepth {
 		return
 	}
@@ -173,8 +170,7 @@ set_ast_package_from_node_deferred :: proc(ast_context: ^AstContext, node: ast.N
 	ast_context.current_package = ast_context.deferred_package[ast_context.deferred_count]
 }
 
-@(deferred_in = set_ast_package_from_node_deferred)
-set_ast_package_from_node_scoped :: proc(ast_context: ^AstContext, node: ast.Node) {
+set_ast_package_from_node_scoped :: proc(ast_context: ^AstContext, node: ast.Node) #scope_exit(.implicit, set_ast_package_from_node_deferred(ast_context, node)) {
 	if ast_context.deferred_count >= DeferredDepth {
 		return
 	}
