@@ -6181,6 +6181,17 @@ ast_attribute_completion :: proc(t: ^testing.T) {
 }
 
 @(test)
+ast_trigger_location_completion :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package main
+		#assert(true, #trig{*})
+		`,
+	}
+
+	test.expect_completion_labels(t, &source, "", {"trigger_location"})
+}
+
+@(test)
 ast_attribute_completion_partial :: proc(t: ^testing.T) {
 	source := test.Source {
 		main = `package main
