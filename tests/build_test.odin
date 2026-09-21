@@ -1,11 +1,62 @@
 package tests
 
 import "core:os"
+import "core:mem/virtual"
 import "core:path/filepath"
 import "core:testing"
 
 import "src:common"
 import "src:server"
+
+@(test)
+ignore_file_tag_only_in_header :: proc(t: ^testing.T) {
+	testing.expect(t, common.has_ignore_file_tag("#+ignore\npackage test\ninvalid code"))
+	testing.expect(t, common.has_ignore_file_tag("// comment\n#+ignore // comment\npackage test"))
+	testing.expect(t, common.has_ignore_file_tag("#+ignore,other\npackage test"))
+	testing.expect(t, !common.has_ignore_file_tag("#+ignored\npackage test"))
+	testing.expect(t, !common.has_ignore_file_tag("// #+ignore\npackage test"))
+	testing.expect(t, !common.has_ignore_file_tag("package test\n#+ignore"))
+}
+
+@(test)
+ignored_document_skips_parser :: proc(t: ^testing.T) {
+	source := "#+ignore\npackage test\ninvalid code"
+	arena: virtual.Arena
+	if !testing.expect(t, virtual.arena_init_growing(&arena) == nil) {
+		return
+	}
+	defer virtual.arena_destroy(&arena)
+	allocator := context.allocator
+	defer context.allocator = allocator
+
+	document := server.Document {
+		fullpath  = "test/ignored.odin",
+		text      = transmute([]u8)source,
+		used_text = len(source),
+		allocator = &arena,
+	}
+	config: common.Config
+	errors, ok := server.parse_document(&document, &config)
+	testing.expect(t, ok)
+	testing.expect_value(t, len(errors), 0)
+	testing.expect_value(t, len(document.ast.decls), 0)
+}
+
+@(test)
+ignored_file_removes_indexed_symbols :: proc(t: ^testing.T) {
+	server.setup_index(server.get_builtin_path())
+	defer server.free_index()
+
+	fullpath := "test/ignored.odin"
+	uri := common.create_uri(fullpath, context.temp_allocator)
+	server.index_file(uri, "package test\nVisible :: 1")
+	_, found := server.lookup("Visible", "test", fullpath)
+	testing.expect(t, found)
+
+	server.index_file(uri, "#+ignore\npackage test\ninvalid code")
+	_, found = server.lookup("Visible", "test", fullpath)
+	testing.expect(t, !found)
+}
 
 @(test)
 append_packages_skip_directories :: proc(t: ^testing.T) {
@@ -22,18 +73,22 @@ append_packages_skip_directories :: proc(t: ^testing.T) {
 	included, _ := filepath.join({root, "included"}, context.temp_allocator)
 	excluded, _ := filepath.join({root, "excluded"}, context.temp_allocator)
 	hidden, _ := filepath.join({root, ".hidden"}, context.temp_allocator)
+	ignored, _ := filepath.join({root, "ignored"}, context.temp_allocator)
 	if !testing.expect(t, os.make_directory(included) == nil) ||
 	   !testing.expect(t, os.make_directory(excluded) == nil) ||
-	   !testing.expect(t, os.make_directory(hidden) == nil) {
+	   !testing.expect(t, os.make_directory(hidden) == nil) ||
+	   !testing.expect(t, os.make_directory(ignored) == nil) {
 		return
 	}
 
 	included_file, _ := filepath.join({included, "included.odin"}, context.temp_allocator)
 	excluded_file, _ := filepath.join({excluded, "excluded.odin"}, context.temp_allocator)
 	hidden_file, _ := filepath.join({hidden, "hidden.odin"}, context.temp_allocator)
+	ignored_file, _ := filepath.join({ignored, "ignored.odin"}, context.temp_allocator)
 	if !testing.expect(t, os.write_entire_file(included_file, "package included") == nil) ||
 	   !testing.expect(t, os.write_entire_file(excluded_file, "package excluded") == nil) ||
-	   !testing.expect(t, os.write_entire_file(hidden_file, "package hidden") == nil) {
+	   !testing.expect(t, os.write_entire_file(hidden_file, "package hidden") == nil) ||
+	   !testing.expect(t, os.write_entire_file(ignored_file, "#+ignore\npackage ignored\ninvalid code") == nil) {
 		return
 	}
 

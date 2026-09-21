@@ -1,9 +1,12 @@
 package server
 
+import "base:runtime"
+
 import "core:fmt"
 import "core:log"
 import "core:odin/ast"
 import "core:odin/tokenizer"
+import "core:os"
 import "core:path/filepath"
 
 import "src:common"
@@ -27,6 +30,13 @@ get_all_package_file_locations :: proc(
 	matches, err := filepath.glob(fmt.tprintf("%v/*.odin", path), context.temp_allocator)
 
 	for match in matches {
+		if data, read_err := os.read_entire_file(match, runtime.default_allocator()); read_err == nil {
+			ignored := common.has_ignore_file_tag(string(data))
+			delete(data, runtime.default_allocator())
+			if ignored {
+				continue
+			}
+		}
 		uri := common.create_uri(match, context.temp_allocator)
 		location := common.Location {
 			uri = uri.uri,

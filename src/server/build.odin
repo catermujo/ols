@@ -143,6 +143,13 @@ append_packages :: proc(
 		}
 
 		if filepath.ext(info.name) == ".odin" {
+			if data, err := os.read_entire_file(info.fullpath, runtime.default_allocator()); err == nil {
+				ignored := common.has_ignore_file_tag(string(data))
+				delete(data, runtime.default_allocator())
+				if ignored {
+					continue
+				}
+			}
 			dir := filepath.dir(info.fullpath)
 			if !slice.contains(pkgs[:], dir) {
 				append(pkgs, strings.clone(dir, allocator))
@@ -216,6 +223,9 @@ try_build_package :: proc(pkg_name: string) {
 
 			if err != nil {
 				log.errorf("failed to read entire file for indexing %v: %v", fullpath, err)
+				continue
+			}
+			if common.has_ignore_file_tag(string(data)) {
 				continue
 			}
 
@@ -337,12 +347,20 @@ index_file :: proc(uri: common.Uri, text: string) -> common.Error {
 		src      = text,
 		pkg      = pkg,
 	}
+	ignored := common.has_ignore_file_tag(text)
 
-	if !parse_file(&p, &file, context.temp_allocator) || file.syntax_error_count > 0 {
-		if !is_ols_builtin_file(fullpath) {
-			log.errorf("error in parse file for indexing %v", fullpath)
+	if !ignored {
+		allocator := context.allocator
+		context.allocator = context.temp_allocator
+		defer context.allocator = allocator
+
+		ok = parse_file(&p, &file, context.temp_allocator)
+		if !ok || file.syntax_error_count > 0 {
+			if !is_ols_builtin_file(fullpath) {
+				log.errorf("error in parse file for indexing %v", fullpath)
+			}
+			return .None
 		}
-		return .None
 	}
 
 	corrected_uri := common.create_uri(fullpath, context.temp_allocator)
@@ -364,6 +382,11 @@ index_file :: proc(uri: common.Uri, text: string) -> common.Error {
 				}
 			}
 		}
+		delete_key(&v.doc, corrected_uri.uri)
+		delete_key(&v.comment, corrected_uri.uri)
+	}
+	if ignored {
+		return .None
 	}
 
 	if ret := collect_symbols(&indexer.index.collection, file, corrected_uri.uri); ret != .None {
