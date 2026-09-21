@@ -448,6 +448,10 @@ parse_document :: proc(document: ^Document, config: ^common.Config) -> ([]Parser
 		src      = string(document.text[:document.used_text]),
 		pkg      = pkg,
 	}
+	if common.has_ignore_file_tag(document.ast.src) {
+		document.imports = nil
+		return nil, true
+	}
 
 	parse_file(&p, &document.ast)
 

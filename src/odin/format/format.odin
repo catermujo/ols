@@ -6,6 +6,8 @@ import "core:odin/ast"
 import "core:odin/parser"
 import "core:os"
 import "core:path/filepath"
+
+import "src:common"
 import "src:odin/printer"
 
 default_style := printer.default_style
@@ -79,6 +81,10 @@ format :: proc(
 	string,
 	bool,
 ) {
+	if common.has_ignore_file_tag(source) {
+		return source, true
+	}
+
 	config := config
 
 	pkg := ast.Package {

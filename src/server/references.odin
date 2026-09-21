@@ -315,6 +315,9 @@ resolve_references :: proc(
 			log.errorf("failed to read entire file for indexing %v: %v", fullpath, err)
 			continue
 		}
+		if common.has_ignore_file_tag(string(data)) {
+			continue
+		}
 
 		if target_name != "" && !strings.contains(string(data), target_name) {
 			continue

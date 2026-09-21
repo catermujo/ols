@@ -8,6 +8,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "core:time"
+import "src:common"
 import "src:odin/format"
 import "src:odin/printer"
 
@@ -25,11 +26,16 @@ format_file :: proc(
 ) -> (
 	string,
 	bool,
+	bool,
 ) {
 	if data, err := os.read_entire_file(filepath, allocator); err == nil {
-		return format.format(filepath, string(data), config, {.Optional_Semicolons}, allocator)
+		if common.has_ignore_file_tag(string(data)) {
+			return "", true, true
+		}
+		formatted, ok := format.format(filepath, string(data), config, {.Optional_Semicolons}, allocator)
+		return formatted, ok, false
 	} else {
-		return "", false
+		return "", false, false
 	}
 }
 
@@ -95,15 +101,14 @@ main :: proc() {
 
 		write_failure = !ok
 	} else if os.is_file(args.path) {
-		if args.write {
-			if data, ok := format_file(args.path, config, arena_allocator); ok {
+		data, ok, ignored := format_file(args.path, config, arena_allocator)
+		if !ignored {
+			if ok && args.write {
 				write_formatted_file(args.path, data)
-			} else {
+			} else if args.write {
 				fmt.eprintf("Failed to write %v", args.path)
 				write_failure = true
-			}
-		} else {
-			if data, ok := format_file(args.path, config, arena_allocator); ok {
+			} else if ok {
 				fmt.print(data)
 			}
 		}
@@ -123,10 +128,17 @@ main :: proc() {
 			append(&files, strings.clone(info.fullpath))
 		}
 
+		formatted_count := 0
 		for file in files {
+			data, ok, ignored := format_file(file, config, arena_allocator)
+			if ignored {
+				free_all(arena_allocator)
+				continue
+			}
+			formatted_count += 1
 			fmt.println(file)
 
-			if data, ok := format_file(file, config, arena_allocator); ok {
+			if ok {
 				if args.write {
 					write_formatted_file(file, data)
 				} else {
@@ -144,7 +156,7 @@ main :: proc() {
 
 		fmt.printf(
 			"Formatted %v files in %vms \n",
-			len(files),
+			formatted_count,
 			time.duration_milliseconds(time.tick_lap_time(&tick_time)),
 		)
 		fmt.printf("Peak memory used: %v \n", watermark / mem.Megabyte)
