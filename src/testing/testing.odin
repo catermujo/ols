@@ -800,6 +800,27 @@ expect_prepare_rename_range :: proc(t: ^testing.T, src: ^Source, expect_range: c
 	}
 }
 
+expect_rename_text :: proc(t: ^testing.T, src: ^Source, new_text, expect_text: string) {
+	spall.trace(#procedure)
+
+	cursor := source_remove_cursor(src)
+
+	setup(src)
+	defer teardown(src)
+
+	workspace, ok := server.get_rename(src.document, new_text, cursor)
+	if !ok {
+		log.error("Failed to get rename workspace edit")
+		return
+	}
+
+	edits := workspace.changes[src.document.uri.uri] or_else nil
+	text := apply_text_edits(edits, string(src.document.text))
+	if text != expect_text {
+		log.errorf("Expected renamed text:\n%s\n\nReceived:\n%s", expect_text, text)
+	}
+}
+
 
 expect_action :: proc(t: ^testing.T, src: ^Source, expect_action_names: []string, ctx: server.CodeActionContext = {}) {
 	spall.trace(#procedure)

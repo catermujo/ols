@@ -145,6 +145,19 @@ get_definition_alias_target :: proc(ast_context: ^AstContext, symbol: Symbol) ->
 		if !ok {
 			return {}, false
 		}
+		if base, ok := expr.expr.derived.(^ast.Ident); ok {
+			import_pkg := base.name
+			if pkg, ok := indexer.index.collection.packages[symbol.pkg]; ok {
+				if aliases, ok := pkg.import_aliases_by_file[expr.pos.file]; ok {
+					if resolved_pkg, ok := aliases[base.name]; ok {
+						import_pkg = resolved_pkg
+					}
+				}
+			}
+			if target, ok := lookup(field.name, import_pkg, expr.pos.file); ok {
+				return target, true
+			}
+		}
 		base, base_ok := resolve_type_expression(ast_context, expr.expr)
 		if !base_ok {
 			return {}, false
@@ -159,6 +172,10 @@ get_definition_alias_target :: proc(ast_context: ^AstContext, symbol: Symbol) ->
 }
 
 skip_definition_aliases :: proc(ast_context: ^AstContext, symbol: Symbol, name: string) -> Symbol {
+	if .Local in symbol.flags || symbol.type == .Field || symbol.type == .EnumMember {
+		return symbol
+	}
+
 	current, ok := get_definition_alias_symbol(ast_context, name, symbol.pkg, symbol)
 	if !ok {
 		return symbol

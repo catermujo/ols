@@ -120,6 +120,29 @@ x := Ali{*}as{}
 }
 
 @(test)
+ast_rename_alias_with_definition_skip :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+Target :: struct {}
+Alias :: Target
+main :: proc() {
+x: Alias
+y := Al{*}ias{}
+}
+`,
+		config = {enable_definition_skip_aliases = true},
+	}
+	test.expect_rename_text(t, &source, "Renamed", `package test
+Target :: struct {}
+Renamed :: Target
+main :: proc() {
+x: Renamed
+y := Renamed{}
+}
+`)
+}
+
+@(test)
 ast_prepare_rename_struct_field_type :: proc (t: ^testing.T) {
 	source := test.Source {
 		main     = `package test

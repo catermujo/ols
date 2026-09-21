@@ -886,6 +886,41 @@ x := Ch{*}ain{}
 }
 
 @(test)
+ast_goto_alias_skip_respects_local_shadow :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+Target :: struct {}
+Alias :: Target
+main :: proc() {
+Alias := 1
+_ = Al{*}ias
+}
+`,
+		config = {enable_definition_skip_aliases = true},
+	}
+	test.expect_definition_locations(t, &source, {{range = {{line = 4, character = 0}, {line = 4, character = 5}}}})
+}
+
+@(test)
+ast_goto_alias_skip_respects_field_shadow :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+Target :: struct {}
+Alias :: Target
+State :: struct {
+Alias: int
+}
+main :: proc() {
+s: State
+_ = s.Al{*}ias
+}
+`,
+		config = {enable_definition_skip_aliases = true},
+	}
+	test.expect_definition_locations(t, &source, {{range = {{line = 4, character = 0}, {line = 4, character = 5}}}})
+}
+
+@(test)
 ast_goto_imported_alias_skip :: proc(t: ^testing.T) {
 	source := test.Source {
 		main = `package test
@@ -905,6 +940,32 @@ Alias :: Target
 	}
 	test.expect_definition_locations(t, &source, {{
 		uri = "file://test/dep/package.odin",
+		range = {{line = 1, character = 0}, {line = 1, character = 6}},
+	}})
+}
+
+@(test)
+ast_goto_reexported_alias_skip :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+import dep "dep"
+main :: proc() {
+x := dep.Al{*}ias{}
+}
+`,
+		packages = {
+			{pkg = "dep/base", source = `package base
+Target :: struct {}
+`},
+			{pkg = "dep", source = `package dep
+import "base"
+Alias :: base.Target
+`},
+		},
+		config = {enable_definition_skip_aliases = true},
+	}
+	test.expect_definition_locations(t, &source, {{
+		uri = "file://test/dep/base/package.odin",
 		range = {{line = 1, character = 0}, {line = 1, character = 6}},
 	}})
 }
