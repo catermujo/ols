@@ -12,11 +12,14 @@ import "core:strings"
 
 import "src:common"
 
+When_Expr_Unknown :: struct {}
+
 When_Expr :: union {
 	int, //Integers types
 	bool, //Boolean types
 	string, //Enum types - those are the hardcoded options from i.e. ODIN_OS
 	^ast.Expr,
+	When_Expr_Unknown,
 }
 
 //Because we use configuration with os names that match the files instead of the enum, i.e. my_file_windows.odin, we have to convert back and fourth.
@@ -193,6 +196,7 @@ resolve_file_when_tag :: proc(tag: string, when_expr_map: map[string]When_Expr) 
 	if !ok || len(decl.values) != 1 do return false, false
 	value, resolved := resolve_when_expr(when_expr_map, decl.values[0])
 	if !resolved do return false, false
+	if _, unknown := value.(When_Expr_Unknown); unknown do return false, true
 	if condition, ok := value.(bool); ok do return condition, true
 	return false, false
 }
@@ -297,8 +301,7 @@ resolve_when_ident :: proc(when_expr_map: map[string]When_Expr, ident: string, d
 	}
 
 	if defer_unknown && !strings.has_prefix(ident, "ODIN_") do return {}, false
-	//If nothing is found we return it as false boolean
-	return false, true
+	return When_Expr_Unknown{}, true
 }
 
 resolve_when_expr :: proc(
@@ -316,6 +319,8 @@ resolve_when_expr :: proc(
 	case bool:
 		return expr, true
 	case string:
+		return expr, true
+	case When_Expr_Unknown:
 		return expr, true
 	case ^ast.Expr:
 		#partial switch odin_expr in expr.derived {
@@ -338,6 +343,7 @@ resolve_when_expr :: proc(
 		case ^ast.Unary_Expr:
 			if odin_expr.op.kind == .Not {
 				expr := resolve_when_expr(when_expr_map, odin_expr.expr, defer_unknown) or_return
+				if _, unknown := expr.(When_Expr_Unknown); unknown do return expr, true
 				b := expr.(bool) or_return
 				return !b, true
 			}
@@ -348,6 +354,17 @@ resolve_when_expr :: proc(
 				if odin_expr.op.kind == .Cmp_Or && lhs_bool do return true, true
 			}
 			rhs := resolve_when_expr(when_expr_map, odin_expr.right, defer_unknown) or_return
+			_, lhs_unknown := lhs.(When_Expr_Unknown)
+			_, rhs_unknown := rhs.(When_Expr_Unknown)
+			if lhs_unknown || rhs_unknown {
+				if odin_expr.op.kind == .Cmp_And {
+					if value, ok := rhs.(bool); ok && !value do return false, true
+				}
+				if odin_expr.op.kind == .Cmp_Or {
+					if value, ok := rhs.(bool); ok && value do return true, true
+				}
+				return When_Expr_Unknown{}, true
+			}
 
 			lhs_bool, lhs_is_bool := lhs.(bool)
 			rhs_bool, rhs_is_bool := rhs.(bool)
@@ -416,6 +433,7 @@ resolve_when_condition :: proc(condition: ^ast.Expr, when_expr_map: map[string]W
 	}
 
 	if when_expr, ok := resolve_when_expr(when_expr_map, condition); ok {
+		if _, unknown := when_expr.(When_Expr_Unknown); unknown do return true
 		b, is_bool := when_expr.(bool)
 		return is_bool && b
 	}

@@ -119,6 +119,34 @@ ast_when_direct_not_define_still_works :: proc(t: ^testing.T) {
 }
 
 @(test)
+ast_when_unknown_condition_keeps_then_branch :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+		when UNRESOLVED {
+			visible :: proc() {}
+		}
+		main :: proc() { visib{*}le() }
+		`,
+	}
+	test.expect_hover(t, &source, "test.visible :: proc()")
+}
+
+@(test)
+ast_when_false_and_unknown_selects_else :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+		when false && UNRESOLVED {
+			hidden :: proc() {}
+		} else {
+			shown :: proc() {}
+		}
+		main :: proc() { sho{*}wn() }
+		`,
+	}
+	test.expect_hover(t, &source, "test.shown :: proc()")
+}
+
+@(test)
 ast_when_local_const_condition :: proc(t: ^testing.T) {
 	source := test.Source {
 		main = `package test
