@@ -925,6 +925,7 @@ visit_stmt :: proc(
 	block_type: Block_Type = .Generic,
 	empty_block := false,
 	block_stmt := false,
+	do_group_id := "",
 ) -> ^Document {
 	if stmt == nil {
 		return empty()
@@ -964,11 +965,22 @@ visit_stmt :: proc(
 			document = cons(document, visit_expr(p, v.label), text(":"), break_with_space())
 		}
 
+		// Odin requires a `do` body to share a line with its control header. Convert
+		// only when the header group breaks, keeping short headers in `do` form.
 		if !uses_do {
 			document = cons(document, visit_begin_brace(p, v.pos, block_type))
 			if p.config.space_single_line_blocks && is_single_line {
 				document = cons(document, break_with_no_newline())
 			}
+		} else if do_group_id != "" {
+			document = cons(
+				document,
+				if_break_or_document(
+					visit_begin_brace(p, v.pos, block_type),
+					cons(text("do"), break_with(" ", false)),
+					do_group_id,
+				),
+			)
 		} else {
 			document = cons(document, text("do"), break_with(" ", false))
 		}
@@ -986,7 +998,18 @@ visit_stmt :: proc(
 		if block_type == .Switch_Stmt && !p.config.indent_cases {
 			document = cons(document, block, comment_end)
 		} else if uses_do {
-			document = cons(document, cons(block, comment_end))
+			if do_group_id != "" {
+				document = cons(
+					document,
+					if_break_or_document(
+						nest(cons(block, comment_end)),
+						cons(block, comment_end),
+						do_group_id,
+					),
+				)
+			} else {
+				document = cons(document, cons(block, comment_end))
+			}
 		} else {
 			document = cons(document, nest(cons(block, comment_end)))
 		}
@@ -996,8 +1019,11 @@ visit_stmt :: proc(
 				document = cons(document, break_with_no_newline())
 			}
 			document = cons(document, visit_end_brace(p, v.end))
+		} else if do_group_id != "" {
+			document = cons(document, if_break_or_document(visit_end_brace(p, v.end), empty(), do_group_id))
 		}
 	case ^ast.If_Stmt:
+		if_do_group_id := "if_do_header" if !p.config.convert_do && block_uses_do(v.body) else ""
 		if v.label != nil {
 			document = cons(document, visit_expr(p, v.label), text(":"), break_with_space())
 		}
@@ -1029,17 +1055,24 @@ visit_stmt :: proc(
 		   v.init != nil && is_assign_statement_ending_with_call(v.init) ||
 		   v.cond != nil && v.init == nil && is_value_expression_call(v.cond) {
 			break_end_document := hang(3, end_document) if v.init != nil else end_document
-			document = cons(
-				document,
-				group(cons(begin_document, if_break_or(end_document, break_end_document, "init"))),
-			)
+			header := cons(begin_document, if_break_or(end_document, break_end_document, "init"))
+			if if_do_group_id != "" {
+				document = cons(document, group(header, Document_Group_Options{id = if_do_group_id}))
+			} else {
+				document = cons(document, group(header))
+			}
 		} else {
-			document = cons(document, group(hang(3, cons(begin_document, end_document))))
+			header := hang(3, cons(begin_document, end_document))
+			if if_do_group_id != "" {
+				document = cons(document, group(header, Document_Group_Options{id = if_do_group_id}))
+			} else {
+				document = cons(document, group(header))
+			}
 		}
 
 		set_source_position(p, v.body.pos)
 
-		document = cons_with_nopl(document, visit_stmt(p, v.body, .If_Stmt))
+		document = cons_with_nopl(document, visit_stmt(p, v.body, .If_Stmt, do_group_id = if_do_group_id))
 
 		set_source_position(p, v.body.end)
 
@@ -1061,9 +1094,6 @@ visit_stmt :: proc(
 			}
 
 
-		}
-		if !p.config.convert_do {
-			document = enforce_fit_if_do(v.body, document)
 		}
 	case ^ast.Switch_Stmt:
 		if v.partial {
@@ -1150,6 +1180,7 @@ visit_stmt :: proc(
 	case ^ast.Expr_Stmt:
 		document = cons(document, visit_expr(p, v.expr))
 	case ^ast.For_Stmt:
+		for_do_group_id := "for_do_header" if !p.config.convert_do && block_uses_do(v.body) else ""
 		if v.label != nil {
 			document = cons(document, visit_expr(p, v.label), text(":"), break_with_space())
 		}
@@ -1180,40 +1211,43 @@ visit_stmt :: proc(
 			for_document = cons(for_document, text(";"))
 		}
 
-		document = cons(document, group(hang(4, for_document)))
+		if for_do_group_id != "" {
+			document = cons(document, group(hang(4, for_document), Document_Group_Options{id = for_do_group_id}))
+		} else {
+			document = cons(document, group(hang(4, for_document)))
+		}
 
 		set_source_position(p, v.body.pos)
-		document = cons_with_nopl(document, visit_stmt(p, v.body))
+		document = cons_with_nopl(document, visit_stmt(p, v.body, do_group_id = for_do_group_id))
 		set_source_position(p, v.body.end)
 
-		if !p.config.convert_do {
-			document = enforce_fit_if_do(v.body, document)
-		}
 	case ^ast.Unroll_Range_Stmt:
+		unroll_do_group_id := "unroll_do_header" if !p.config.convert_do && block_uses_do(v.body) else ""
 		if v.label != nil {
 			document = cons(document, visit_expr(p, v.label), text(":"), break_with_space())
 		}
 
-		document = cons(document, text("#unroll"))
-		document = cons_with_nopl(document, text("for"))
+		unroll_header := text("#unroll")
+		unroll_header = cons_with_nopl(unroll_header, text("for"))
 
-		document = cons_with_nopl(document, visit_expr(p, v.val0))
+		unroll_header = cons_with_nopl(unroll_header, visit_expr(p, v.val0))
 
 		if v.val1 != nil {
-			document = cons(document, cons_with_opl(text(","), visit_expr(p, v.val1)))
+			unroll_header = cons(unroll_header, cons_with_opl(text(","), visit_expr(p, v.val1)))
 		}
 
-		document = cons_with_nopl(document, text("in"))
+		unroll_header = cons_with_nopl(unroll_header, text("in"))
 
-		document = cons_with_nopl(document, visit_expr(p, v.expr))
+		unroll_header = cons_with_nopl(unroll_header, visit_expr(p, v.expr))
+		if unroll_do_group_id != "" {
+			document = cons(document, group(unroll_header, Document_Group_Options{id = unroll_do_group_id}))
+		} else {
+			document = cons(document, unroll_header)
+		}
 
 		set_source_position(p, v.body.pos)
-		document = cons_with_nopl(document, visit_stmt(p, v.body))
+		document = cons_with_nopl(document, visit_stmt(p, v.body, do_group_id = unroll_do_group_id))
 		set_source_position(p, v.body.end)
-
-		if !p.config.convert_do {
-			document = enforce_fit_if_do(v.body, document)
-		}
 	case ^ast.Range_Stmt:
 		if v.label != nil {
 			document = cons(document, visit_expr(p, v.label), text(":"), break_with_space())
@@ -1290,10 +1324,17 @@ visit_stmt :: proc(
 		document = cons(document, text("defer"))
 		document = cons_with_nopl(document, visit_stmt(p, v.stmt))
 	case ^ast.When_Stmt:
-		document = cons(document, cons_with_nopl(text("when"), visit_expr(p, v.cond)))
+		when_do_group_id := "when_do_header" if !p.config.convert_do && block_uses_do(v.body) else ""
+
+		when_header := cons_with_nopl(text("when"), visit_expr(p, v.cond))
+		if when_do_group_id != "" {
+			document = cons(document, group(when_header, Document_Group_Options{id = when_do_group_id}))
+		} else {
+			document = cons(document, when_header)
+		}
 
 		set_source_position(p, v.body.pos)
-		document = cons_with_nopl(document, visit_stmt(p, v.body))
+		document = cons_with_nopl(document, visit_stmt(p, v.body, do_group_id = when_do_group_id))
 		set_source_position(p, v.body.end)
 
 		if v.else_stmt != nil {
@@ -1316,9 +1357,6 @@ visit_stmt :: proc(
 			}
 		}
 
-		if !p.config.convert_do {
-			document = enforce_fit_if_do(v.body, document)
-		}
 	case ^ast.Branch_Stmt:
 		document = cons(document, text(v.tok.text))
 
