@@ -25,3 +25,9 @@ Value :: 42
 
 	test.expect_index_updates_preserve_and_invalidate_resolution_caches(t, &src)
 }
+
+@(test)
+index_updates_replace_file_import_aliases :: proc(t: ^testing.T) {
+	src := test.Source {main = "package test\n"}
+	test.expect_index_updates_replace_file_import_aliases(t, &src)
+}

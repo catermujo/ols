@@ -299,6 +299,10 @@ remove_index_file :: proc(uri: common.Uri) -> common.Error {
 	invalidate_document_symbol_caches()
 
 	for k, &v in indexer.index.collection.packages {
+		if aliases, found := v.import_aliases_by_file[fullpath]; found {
+			delete(aliases)
+			delete_key(&v.import_aliases_by_file, fullpath)
+		}
 		for k2, v2 in v.symbols {
 			if strings.equal_fold(corrected_uri.uri, v2.uri) {
 				free_symbol(v2, indexer.index.collection.allocator)
@@ -377,6 +381,10 @@ index_file :: proc(uri: common.Uri, text: string) -> common.Error {
 	invalidate_document_symbol_caches()
 
 	for k, &v in indexer.index.collection.packages {
+		if aliases, found := v.import_aliases_by_file[fullpath]; found {
+			delete(aliases)
+			delete_key(&v.import_aliases_by_file, fullpath)
+		}
 		for k2, v2 in v.symbols {
 			if corrected_uri.uri == v2.uri {
 				free_symbol(v2, indexer.index.collection.allocator)

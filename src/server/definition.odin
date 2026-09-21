@@ -48,6 +48,73 @@ get_all_package_file_locations :: proc(
 	return true
 }
 
+get_line_character_limit :: proc(text: []u8, target_line: int) -> (int, bool) {
+	line := 0
+	start := 0
+	i := 0
+	for i < len(text) {
+		if text[i] == '\n' || text[i] == '\r' {
+			if line == target_line {
+				return common.get_character_offset_u8_to_u16(i - start, text[start:i]), true
+			}
+			if text[i] == '\r' && i + 1 < len(text) && text[i + 1] == '\n' {
+				i += 1
+			}
+			line += 1
+			start = i + 1
+		}
+		i += 1
+	}
+	if line == target_line {
+		return common.get_character_offset_u8_to_u16(len(text) - start, text[start:]), true
+	}
+	return 0, false
+}
+
+count_source_lines :: proc(text: []u8) -> int {
+	lines := 1
+	for i := 0; i < len(text); i += 1 {
+		if text[i] == '\n' || text[i] == '\r' {
+			if text[i] == '\r' && i + 1 < len(text) && text[i + 1] == '\n' {
+				i += 1
+			}
+			lines += 1
+		}
+	}
+	return lines
+}
+
+sanitize_location_ranges :: proc(document: ^Document, locations: ^[dynamic]common.Location) {
+	for i in 0 ..< len(locations^) {
+		loc := &locations[i]
+		fullpath := document.fullpath
+		if loc.uri != "" {
+			fullpath = common.uri_to_path(loc.uri, context.temp_allocator)
+		}
+		text: []u8
+		if fullpath == document.fullpath {
+			text = document.text[:document.used_text]
+		} else if data, err := os.read_entire_file(fullpath, context.temp_allocator); err == nil {
+			text = data
+		} else {
+			continue
+		}
+
+		max_line := count_source_lines(text) - 1
+		loc.range.start.line = clamp(loc.range.start.line, 0, max_line)
+		loc.range.end.line = clamp(loc.range.end.line, loc.range.start.line, max_line)
+		if limit, ok := get_line_character_limit(text, loc.range.start.line); ok {
+			loc.range.start.character = clamp(loc.range.start.character, 0, limit)
+		}
+		if limit, ok := get_line_character_limit(text, loc.range.end.line); ok {
+			loc.range.end.character = clamp(loc.range.end.character, 0, limit)
+		}
+		if loc.range.end.line == loc.range.start.line && loc.range.end.character < loc.range.start.character {
+			loc.range.end.character = loc.range.start.character
+		}
+	}
+}
+
 get_definition_location :: proc(document: ^Document, position: common.Position, config: ^common.Config) -> ([]common.Location, bool) {
 	spall.trace(#procedure, document.fullpath)
 
@@ -80,6 +147,7 @@ get_definition_location :: proc(document: ^Document, position: common.Position, 
 
 	if position_context.import_stmt != nil {
 		if get_all_package_file_locations(document, position_context.import_stmt, &locations) {
+			sanitize_location_ranges(document, &locations)
 			return locations[:], true
 		}
 	} else if position_context.selector_expr != nil {
@@ -97,6 +165,7 @@ get_definition_location :: proc(document: ^Document, position: common.Position, 
 				}
 
 				append(&locations, location)
+				sanitize_location_ranges(document, &locations)
 
 				return locations[:], true
 			} else {
@@ -177,6 +246,7 @@ get_definition_location :: proc(document: ^Document, position: common.Position, 
 	}
 
 	append(&locations, location)
+	sanitize_location_ranges(document, &locations)
 
 	return locations[:], true
 }

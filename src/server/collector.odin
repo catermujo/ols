@@ -40,6 +40,7 @@ SymbolPackage :: struct {
 	objc_structs:       map[string]ObjcStruct, //mapping from struct name to function
 	methods:            map[Method][dynamic]Symbol,
 	imports:            [dynamic]string, //Used for references to figure whether the package is even able to reference the symbol
+	import_aliases_by_file: map[string]map[string]string,
 	proc_group_members: map[string]bool, // Tracks procedure names that are part of proc groups (used by fake methods)
 	doc:                map[string]string, // Tracks package doc strings in the file, indexed by the file uri
 	comment:            map[string]string, // Tracks package comments in the file, indexed by file uri
@@ -127,6 +128,10 @@ delete_symbol_package :: proc (pkg: SymbolPackage, allocator := context.allocato
 	}
 	delete(pkg.comment)
 
+	for _, aliases in pkg.import_aliases_by_file {
+		delete(aliases)
+	}
+	delete(pkg.import_aliases_by_file)
 	delete(pkg.imports)
 	delete(pkg.proc_group_members)
 }
@@ -593,6 +598,7 @@ get_or_create_package :: proc(collection: ^SymbolCollection, pkg_name: string) -
 		pkg.proc_group_members = make(map[string]bool, 10, collection.allocator)
 		pkg.doc = make(map[string]string, collection.allocator)
 		pkg.comment = make(map[string]string, collection.allocator)
+		pkg.import_aliases_by_file = make(map[string]map[string]string, collection.allocator)
 	}
 	return pkg
 }
@@ -843,15 +849,22 @@ collect_objc :: proc(
 	}
 }
 
-collect_imports :: proc(collection: ^SymbolCollection, file: ast.File, directory: string) {
+collect_imports :: proc(collection: ^SymbolCollection, file: ast.File, directory: string, package_map: map[string]string) {
 	spall.trace(#procedure)
-
-	_pkg := get_index_unique_string(collection, directory)
-
-	if _pkg, ok := collection.packages[_pkg]; ok {
-
+	pkg := get_or_create_package(collection, get_index_unique_string(collection, directory))
+	file_key := get_index_unique_string(collection, file.fullpath)
+	if old, found := pkg.import_aliases_by_file[file_key]; found {
+		delete(old)
+		delete_key(&pkg.import_aliases_by_file, file_key)
 	}
-
+	if len(package_map) == 0 {
+		return
+	}
+	aliases := make(map[string]string, collection.allocator)
+	for alias, import_path in package_map {
+		aliases[get_index_unique_string(collection, alias)] = get_index_unique_string(collection, import_path)
+	}
+	pkg.import_aliases_by_file[file_key] = aliases
 }
 
 @(private = "file")
@@ -1159,7 +1172,7 @@ collect_symbols :: proc(collection: ^SymbolCollection, file: ast.File, uri: stri
 		collect_fake_methods(collection, exprs, directory, uri)
 	}
 
-	collect_imports(collection, file, directory)
+	collect_imports(collection, file, directory, package_map)
 
 
 	return .None

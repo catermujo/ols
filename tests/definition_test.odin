@@ -1,6 +1,7 @@
 package tests
 
 import "core:fmt"
+import "core:strings"
 import "core:testing"
 
 import "src:common"
@@ -851,4 +852,149 @@ x := Qu{*}x{foo = 1}
 `,
 	}
 	test.expect_definition_locations(t, &source2, {{range = {{line = 4, character = 0}, {line = 4, character = 3}}}})
+}
+
+@(test)
+ast_goto_proc_default_implicit_enum_member :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+My_Enum :: enum {One, Two, Three, Four}
+my_fn :: proc(my_enum: My_Enum = .Fo{*}ur) {}
+`,
+	}
+	test.expect_definition_locations(t, &source, {{
+		range = {{line = 1, character = 34}, {line = 1, character = 38}},
+	}})
+}
+
+@(test)
+ast_goto_nested_inline_struct_field_keeps_metadata :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+State :: struct {
+	font: struct {
+		using _: struct {pad: int},
+		ctx: rawptr,
+	},
+}
+g: State
+main :: proc() {
+	_ = g.font.ct{*}x
+}
+`,
+	}
+	test.expect_definition_locations(t, &source, {{
+		range = {{line = 4, character = 2}, {line = 4, character = 5}},
+	}})
+}
+
+@(test)
+ast_goto_package_config_field_keeps_decl_range :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+import sdl "sdl3"
+when sdl.MIX{*}ER {}
+`,
+		packages = {{
+			pkg = "sdl3",
+			source = `package sdl3
+MIXER :: #config(SDL3_MIXER, false)
+`,
+		}},
+	}
+	test.expect_definition_locations(t, &source, {{
+		uri = "file://test/sdl3/package.odin",
+		range = {{line = 1, character = 0}, {line = 1, character = 5}},
+	}})
+}
+
+@(test)
+ast_goto_imported_distinct_type_keeps_decl_range :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+import "msdf"
+USE_MSDF :: #config(USE_MSDF, false)
+when USE_MSDF {
+	MSDF_Font_Handle :: msdf.FontHand{*}le
+}
+`,
+		packages = {{
+			pkg = "msdf",
+			source = `package msdf
+FontHandle :: distinct rawptr
+`,
+		}},
+	}
+	test.expect_definition_locations(t, &source, {{
+		uri = "file://test/msdf/package.odin",
+		range = {{line = 1, character = 0}, {line = 1, character = 10}},
+	}})
+}
+
+@(test)
+ast_goto_foreign_inline_enum_member_uses_foreign_lines :: proc(t: ^testing.T) {
+	builder := strings.builder_make(context.temp_allocator)
+	strings.write_string(&builder, "package dep\n\n")
+	for i in 0 ..< 80 {
+		fmt.sbprint(&builder, "pad_", i, " :: ", i, "\n", sep = "")
+	}
+	strings.write_string(&builder, "Thing :: struct {\n\tkind: enum {\n\t\t\t\t\t\t\t\t\t\tAlpha,\n\t},\n}\n")
+	source := test.Source {
+		main = `package test
+import dep "dep"
+main :: proc() {
+	t: dep.Thing
+	t.kind = .Al{*}pha
+}
+`,
+		packages = {{pkg = "dep", source = strings.to_string(builder)}},
+	}
+	test.expect_definition_locations(t, &source, {{
+		uri = "file://test/dep/package.odin",
+		range = {{line = 84, character = 10}, {line = 84, character = 15}},
+	}})
+}
+
+@(test)
+ast_goto_cross_file_using_field_keeps_source_uri :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+use :: proc() {
+	g.pip{*}e
+}
+`,
+		files = {{
+			name = "state.odin",
+			source = `package test
+GFX :: struct {pipe: int}
+State :: struct {using _: GFX}
+g: ^State
+`,
+		}},
+	}
+	test.expect_definition_locations(t, &source, {{
+		uri = "file://test/state.odin",
+		range = {{line = 1, character = 15}, {line = 1, character = 19}},
+	}})
+}
+
+@(test)
+ast_goto_implicit_enum_through_imported_alias :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+import dep "dep"
+Alias :: dep.My_Enum
+value: Alias = .Fo{*}ur
+`,
+		packages = {{
+			pkg = "dep",
+			source = `package dep
+My_Enum :: enum {One, Four}
+`,
+		}},
+	}
+	test.expect_definition_locations(t, &source, {{
+		uri = "file://test/dep/package.odin",
+		range = {{line = 1, character = 22}, {line = 1, character = 26}},
+	}})
 }

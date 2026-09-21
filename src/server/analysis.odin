@@ -393,6 +393,10 @@ resolve_base_symbol :: proc(ast_context: ^AstContext, symbol: Symbol, bypass_dis
 		expr = symbol.value_expr
 	}
 	if expr == nil {
+		#partial switch _ in symbol.value {
+		case SymbolStructValue, SymbolEnumValue, SymbolUnionValue, SymbolBitSetValue, SymbolBitFieldValue:
+			return symbol
+		}
 		file := common.uri_to_path(symbol.uri, context.temp_allocator)
 		expr = symbol_to_expr(symbol, file, context.temp_allocator)
 	}
@@ -2393,6 +2397,62 @@ resolve_soa_selector_field :: proc(
 	return {}, false
 }
 
+count_swizzle_components :: proc(field: string) -> (int, bool) {
+	if len(field) == 0 {
+		return 0, false
+	}
+	for c in field {
+		if c != 'x' && c != 'y' && c != 'z' && c != 'w' &&
+		   c != 'r' && c != 'g' && c != 'b' && c != 'a' {
+			return 0, false
+		}
+	}
+	return len(field), true
+}
+
+resolve_fixed_array_definition_target :: proc(symbol: Symbol, file: string) -> Symbol {
+	if strings.contains(symbol.uri, ".generated.odin") {
+		if indexed, ok := lookup(symbol.name, symbol.pkg, file); ok && indexed.value_expr != nil {
+			if selector, ok := indexed.value_expr.derived.(^ast.Selector_Expr); ok && selector.field != nil {
+				if alias, ok := selector.expr.derived.(^ast.Ident); ok {
+					if pkg, ok := indexer.index.collection.packages[symbol.pkg]; ok {
+						if aliases, ok := pkg.import_aliases_by_file[indexed.value_expr.pos.file]; ok {
+							if import_pkg, ok := aliases[alias.name]; ok {
+								if target, ok := lookup(selector.field.name, import_pkg, file); ok {
+									return target
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	result := symbol
+	for _ in 0 ..< 8 {
+		if .Distinct in result.flags {
+			break
+		}
+		indexed, ok := lookup(result.name, result.pkg, file)
+		if !ok || indexed.value_expr == nil {
+			break
+		}
+		ident, is_ident := indexed.value_expr.derived.(^ast.Ident)
+		if !is_ident {
+			break
+		}
+		if target, ok := lookup(ident.name, result.pkg, file); ok {
+			if target.name == result.name && target.pkg == result.pkg {
+				break
+			}
+			result = target
+		} else {
+			break
+		}
+	}
+	return result
+}
+
 resolve_selector_expression :: proc(ast_context: ^AstContext, node: ^ast.Selector_Expr) -> (Symbol, bool) {
 
 	spall.trace(#procedure)
@@ -2410,16 +2470,8 @@ resolve_selector_expression :: proc(ast_context: ^AstContext, node: ^ast.Selecto
 			if .Soa in selector.flags {
 				return {}, false
 			}
-			components_count := 0
-			for c in node.field.name {
-				if c == 'x' || c == 'y' || c == 'z' || c == 'w' || c == 'r' || c == 'g' || c == 'b' || c == 'a' {
-					components_count += 1
-				} else {
-					return {}, false
-				}
-			}
-
-			if components_count == 0 {
+			components_count, ok := count_swizzle_components(node.field.name)
+			if !ok {
 				return {}, false
 			}
 
@@ -3423,6 +3475,17 @@ resolve_implicit_selector :: proc(
 		}
 	}
 
+	if position_context.function != nil &&
+	   position_context.function.type != nil &&
+	   position_context.function.type.params != nil &&
+	   position_in_node(position_context.function.type.params, position_context.position) {
+		if index, ok := find_position_in_field_list(position_context, position_context.function.type.params); ok {
+			if type, ok := get_field_list_type_at_index(position_context.function.type.params.list, index); ok {
+				return resolve_type_expression(ast_context, type)
+			}
+		}
+	}
+
 	if position_context.struct_type != nil {
 		st := position_context.struct_type
 		if position_in_node(st, position_context.position) {
@@ -4117,7 +4180,13 @@ resolve_symbol_selector :: proc(
 		}
 		return resolve_soa_selector_field(ast_context, symbol, v.expr, nil, field)
 	case SymbolFixedArrayValue:
-		return resolve_soa_selector_field(ast_context, symbol, v.expr, v.len, field)
+		if resolved, ok := resolve_soa_selector_field(ast_context, symbol, v.expr, v.len, field); ok {
+			return resolved, true
+		}
+		if _, ok := count_swizzle_components(field); ok && symbol.range != {} {
+			return resolve_fixed_array_definition_target(symbol, selector.pos.file), true
+		}
+		return {}, false
 	case SymbolMapValue:
 		if field == "allocator" {
 			return resolve_container_allocator_location(ast_context, "Raw_Map")
@@ -4744,7 +4813,7 @@ make_symbol_enum_from_ast :: proc(
 	inlined := false,
 ) -> Symbol {
 	symbol := Symbol {
-		range = common.get_token_range(v, ast_context.file.src),
+		range = get_node_range_for_ast_context(ast_context, v),
 		type  = .Enum,
 		name  = name,
 		pkg   = get_package_from_node(v.node),
@@ -4762,7 +4831,7 @@ make_symbol_enum_from_ast :: proc(
 	values := make([dynamic]^ast.Expr, ast_context.allocator)
 
 	for n in v.fields {
-		name, range, value := get_enum_field_name_range_value(n, ast_context.file.src)
+		name, range, value := get_enum_field_name_range_value_with_context(ast_context, n)
 		append(&names, name)
 		append(&ranges, range)
 		append(&values, value)
@@ -4780,6 +4849,23 @@ make_symbol_enum_from_ast :: proc(
 	}
 
 	return symbol
+}
+
+get_enum_field_name_range_value_with_context :: proc(ast_context: ^AstContext, n: ^ast.Expr) -> (string, common.Range, ^ast.Expr) {
+	if ident, ok := n.derived.(^ast.Ident); ok {
+		return ident.name, get_node_range_for_ast_context(ast_context, ident), nil
+	}
+	if field, ok := n.derived.(^ast.Field_Value); ok {
+		if ident, ok := field.field.derived.(^ast.Ident); ok {
+			return ident.name, get_node_range_for_ast_context(ast_context, ident), field.value
+		}
+		if binary, ok := field.field.derived.(^ast.Binary_Expr); ok {
+			if ident, ok := binary.left.derived.(^ast.Ident); ok {
+				return ident.name, get_node_range_for_ast_context(ast_context, binary), binary.right
+			}
+		}
+	}
+	return "", {}, nil
 }
 
 get_enum_field_name_range_value :: proc(n: ^ast.Expr, document_text: string) -> (string, common.Range, ^ast.Expr) {

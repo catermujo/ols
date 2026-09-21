@@ -82,6 +82,28 @@ Replacement :: 3
 	testing.expectf(t, !cached, "Index removal must invalidate resolution caches")
 }
 
+expect_index_updates_replace_file_import_aliases :: proc(t: ^testing.T, src: ^Source) {
+	setup(src)
+	defer teardown(src)
+
+	uri := common.create_uri("test/aliases.odin", context.temp_allocator)
+	_ = server.index_file(uri, "package test\nimport old \"old\"\n")
+	pkg := &server.indexer.index.collection.packages["test"]
+	aliases := pkg.import_aliases_by_file[uri.path]
+	_, has_old := aliases["old"]
+	testing.expectf(t, has_old, "Expected first import alias")
+
+	_ = server.index_file(uri, "package test\nimport new \"new\"\n")
+	aliases = pkg.import_aliases_by_file[uri.path]
+	_, has_old = aliases["old"]
+	_, has_new := aliases["new"]
+	testing.expectf(t, !has_old && has_new, "Expected only the replacement import alias")
+
+	_ = server.remove_index_file(uri)
+	_, present := pkg.import_aliases_by_file[uri.path]
+	testing.expectf(t, !present, "Expected import aliases to clear when the file is removed")
+}
+
 @(private)
 cache_document_symbols :: proc(t: ^testing.T, document: ^server.Document) {
 	allocator, ok := server.document_allocator(document^)
