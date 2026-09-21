@@ -2848,6 +2848,23 @@ ast_hover_proc_directives :: proc(t: ^testing.T) {
 }
 
 @(test)
+ast_hover_proc_assertion_directives :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+		f{*}oo :: proc() #type_assert #downcast_assert {}
+	`,
+	}
+	test.expect_hover(t, &source, "test.foo :: proc() #type_assert #downcast_assert")
+
+	source = test.Source {
+		main = `package test
+		b{*}ar :: proc() #no_type_assert #no_downcast_assert {}
+	`,
+	}
+	test.expect_hover(t, &source, "test.bar :: proc() #no_type_assert #no_downcast_assert")
+}
+
+@(test)
 ast_hover_proc_attributes :: proc(t: ^testing.T) {
 	source := test.Source {
 		main = `package test
