@@ -88,6 +88,10 @@ when_file_tag_filters_indexed_symbols :: proc(t: ^testing.T) {
 	server.index_file(uri, "#+when LOCAL\npackage test\nLOCAL :: true\nLocal :: 1")
 	_, found = server.lookup("Local", "test", fullpath)
 	testing.expect(t, found)
+
+	server.index_file(uri, "#+when UNRESOLVED\npackage test\nMissing :: 1")
+	_, found = server.lookup("Missing", "test", fullpath)
+	testing.expect(t, !found)
 }
 
 @(test)
