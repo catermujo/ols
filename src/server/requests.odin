@@ -1837,6 +1837,7 @@ notification_workspace_did_change_configuration :: proc(
 		}
 	}
 	read_ols_initialize_options(config, ols_config, workspace_uri)
+	reference_candidate_cache_reset()
 	refresh_package_aliases_if_hidden_paths_changed(previous_skip_hidden_paths, config)
 
 	if config.enable_checker_workspace_diagnostics {

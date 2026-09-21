@@ -12,11 +12,31 @@ import "core:path/filepath"
 import path "core:path/slashpath"
 import "core:slice"
 import "core:strings"
+import "core:time"
 
 import "src:common"
 import "src:spall"
 
 reference_dir_blacklist :: []string{"node_modules", ".git"}
+
+ReferenceCandidateCacheEntry :: struct {
+	paths: [dynamic]string,
+	created: time.Time,
+}
+
+@(thread_local)
+reference_candidate_cache: map[string]ReferenceCandidateCacheEntry
+
+reference_candidate_cache_reset :: proc() {
+	allocator := runtime.default_allocator()
+	for pkg, entry in reference_candidate_cache {
+		for fullpath in entry.paths do delete(fullpath, allocator)
+		delete(entry.paths)
+		delete(pkg, allocator)
+	}
+	delete(reference_candidate_cache)
+	reference_candidate_cache = nil
+}
 
 reference_path_is_excluded :: proc(fullpath: string) -> bool {
 	forward_path, _ := filepath.replace_separators(fullpath, '/', context.temp_allocator)
@@ -131,6 +151,62 @@ source_may_reference_package :: proc(fullpath, pkg_name, src: string) -> bool {
 	}
 
 	return false
+}
+
+collect_workspace_reference_candidates :: proc(pkg_name: string, paths: ^map[string]struct{}) {
+	if entry, ok := reference_candidate_cache[pkg_name]; ok && time.since(entry.created) < 30 * time.Second {
+		for fullpath in entry.paths do add_reference_candidate_path(paths, fullpath)
+		return
+	}
+
+	// Rebuild on expiry, and cap memory when many packages are queried.
+	if len(reference_candidate_cache) >= 16 || (pkg_name in reference_candidate_cache) {
+		reference_candidate_cache_reset()
+	}
+
+	scan_arena: runtime.Arena
+	_ = runtime.arena_init(&scan_arena, mem.Megabyte * 2, runtime.default_allocator())
+	defer runtime.arena_destroy(&scan_arena)
+
+	for workspace in common.config.workspace_folders {
+		uri, valid := common.parse_uri(workspace.uri, context.temp_allocator)
+		if !valid do continue
+		physical_root, _ := os.get_absolute_path(uri.path, context.temp_allocator)
+		w := os.walker_create(uri.path)
+		defer os.walker_destroy(&w)
+		for info in os.walker_walk(&w) {
+			logical_path := info.fullpath
+			if physical_root != "" && strings.has_prefix(info.fullpath, physical_root) &&
+			   len(info.fullpath) > len(physical_root) && info.fullpath[len(physical_root)] == '/' {
+				logical_path = fmt.tprintf("%s%s", uri.path, info.fullpath[len(physical_root):])
+			}
+			if info.type == .Directory {
+				if reference_should_skip_dir(logical_path) do os.walker_skip_dir(&w)
+				continue
+			}
+			if info.fullpath == "" || !strings.has_suffix(info.name, ".odin") do continue
+			runtime.arena_free_all(&scan_arena)
+			data, err := os.read_entire_file(info.fullpath, runtime.arena_allocator(&scan_arena))
+			if err != nil {
+				log.warnf("failed to read file for references %v: %v", info.fullpath, err)
+				continue
+			}
+			if source_may_reference_package(logical_path, pkg_name, string(data)) {
+				add_reference_candidate_path(paths, logical_path)
+			}
+		}
+	}
+
+	allocator := runtime.default_allocator()
+	if reference_candidate_cache == nil {
+		reference_candidate_cache = make(map[string]ReferenceCandidateCacheEntry, 16, allocator)
+	}
+	cached_paths := make([dynamic]string, 0, len(paths^), allocator)
+	for fullpath in paths^ do append(&cached_paths, strings.clone(fullpath, allocator))
+	reference_candidate_cache[strings.clone(pkg_name, allocator)] = {
+		paths = cached_paths,
+		created = time.now(),
+	}
 }
 
 prepare_references :: proc(
@@ -407,55 +483,7 @@ resolve_references :: proc(
 	}
 
 	when !ODIN_TEST {
-		scan_arena: runtime.Arena
-		_ = runtime.arena_init(&scan_arena, mem.Megabyte * 2, runtime.default_allocator())
-		defer runtime.arena_destroy(&scan_arena)
-
-		for workspace in common.config.workspace_folders {
-			uri, valid := common.parse_uri(workspace.uri, context.temp_allocator)
-			if !valid do continue
-			w := os.walker_create(uri.path)
-			defer os.walker_destroy(&w)
-			for info in os.walker_walk(&w) {
-				if info.type == .Directory {
-					if reference_should_skip_dir(info.fullpath) {
-						os.walker_skip_dir(&w)
-					}
-					continue
-				}
-
-				if info.fullpath == "" {
-					continue
-				}
-
-				if strings.has_suffix(info.name, ".odin") {
-					slash_path, _ := filepath.replace_separators(info.fullpath, '/', context.temp_allocator)
-					if strings.equal_fold(slash_path, document.fullpath) {
-						continue
-					}
-
-					if _, exists := candidate_paths[slash_path]; exists {
-						continue
-					}
-
-					runtime.arena_free_all(&scan_arena)
-					scan_allocator := runtime.arena_allocator(&scan_arena)
-					data, err := os.read_entire_file(info.fullpath, scan_allocator)
-					if err != nil {
-						log.errorf("failed to read entire file for references %v: %v", info.fullpath, err)
-						continue
-					}
-
-					if target_name != "" && !strings.contains(string(data), target_name) {
-						continue
-					}
-
-					if source_may_reference_package(info.fullpath, symbol.pkg, string(data)) {
-						add_reference_candidate_path(&candidate_paths, info.fullpath)
-					}
-				}
-			}
-		}
+		collect_workspace_reference_candidates(symbol.pkg, &candidate_paths)
 	}
 
 	for fullpath in candidate_paths {
