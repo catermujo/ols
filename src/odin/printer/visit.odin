@@ -926,6 +926,7 @@ visit_stmt :: proc(
 	empty_block := false,
 	block_stmt := false,
 	do_group_id := "",
+	force_braces := false,
 ) -> ^Document {
 	if stmt == nil {
 		return empty()
@@ -958,7 +959,7 @@ visit_stmt :: proc(
 	case ^ast.Using_Stmt:
 		document = cons(document, cons_with_nopl(text("using"), visit_exprs(p, v.list, {.Add_Comma})))
 	case ^ast.Block_Stmt:
-		uses_do := v.uses_do && !p.config.convert_do
+		uses_do := v.uses_do && !p.config.convert_do && !force_braces
 		is_single_line := v.open.line == v.end.line
 
 		if v.label != nil {
@@ -1280,12 +1281,14 @@ visit_stmt :: proc(
 		// Newlines in a range-loop header trigger semicolon insertion and turn the
 		// header into invalid Odin, so it must remain on one physical line.
 		document = cons(document, enforce_fit(range_document))
+		body_force_braces :=
+			!p.config.convert_do && block_uses_do(v.body) && contains_hard_newline(range_document)
 
 		set_source_position(p, v.body.pos)
-		document = cons_with_nopl(document, visit_stmt(p, v.body))
+		document = cons_with_nopl(document, visit_stmt(p, v.body, force_braces = body_force_braces))
 		set_source_position(p, v.body.end)
 
-		if !p.config.convert_do {
+		if !p.config.convert_do && !body_force_braces {
 			document = enforce_fit_if_do(v.body, document)
 		}
 	case ^ast.Return_Stmt:
@@ -1323,6 +1326,21 @@ visit_stmt :: proc(
 	case ^ast.Defer_Stmt:
 		document = cons(document, text("defer"))
 		document = cons_with_nopl(document, visit_stmt(p, v.stmt))
+	case ^ast.With_Stmt:
+		if v.label != nil {
+			document = cons(document, visit_expr(p, v.label), text(":"), break_with_space())
+		}
+
+		document = cons(document, text("with"))
+		if v.init != nil {
+			document = cons_with_opl(document, visit_stmt(p, v.init))
+			document = cons(document, text(";"))
+		}
+
+		document = cons_with_opl(document, visit_stmt(p, v.opener))
+		set_source_position(p, v.body.pos)
+		document = cons_with_nopl(document, visit_stmt(p, v.body))
+		set_source_position(p, v.body.end)
 	case ^ast.When_Stmt:
 		when_group_id := "when_header"
 		when_do_group_id := when_group_id if !p.config.convert_do && block_uses_do(v.body) else ""
@@ -2268,6 +2286,23 @@ visit_struct_field_list :: proc(p: ^Printer, list: ^ast.Field_List, options := L
 }
 
 @(private)
+visit_lambda_capture_list :: proc(p: ^Printer, captures: []^ast.Expr) -> ^Document {
+	document := text("[")
+	if len(captures) == 0 {
+		return cons(document, text("]"))
+	}
+
+	document = cons(
+		document,
+		nest(cons(break_with(""), visit_exprs(p, captures, {.Add_Comma, .Group}))),
+		if_break(","),
+		break_with(""),
+		text("]"),
+	)
+	return group(document)
+}
+
+@(private)
 visit_proc_tags :: proc(p: ^Printer, proc_tags: ast.Proc_Tags) -> ^Document {
 	document := empty()
 	append_tag :: proc(doc: ^Document, tag: string) -> ^Document {
@@ -2306,9 +2341,12 @@ visit_proc_type :: proc(
 	contains_body: bool,
 	contains_where_clauses: bool,
 ) -> ^Document {
-	document := text("proc")
+	document := text("lambda") if proc_type.is_lambda else text("proc")
 
 	explicit_calling := false
+	if proc_type.is_lambda && (len(proc_type.captures) > 0 || contains_body) {
+		document = cons(document, visit_lambda_capture_list(p, proc_type.captures))
+	}
 
 	if v, ok := proc_type.calling_convention.(string); ok {
 		explicit_calling = true

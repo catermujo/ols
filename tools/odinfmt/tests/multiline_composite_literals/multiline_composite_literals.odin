@@ -21,4 +21,6 @@ main :: proc() {
 
 	// Single-line arrays stay inlined.
 	inlined := [?]int{1, 2, 3}
+
+	for value in ([?]int{1 /* first */, 2}) do _ = value
 }
