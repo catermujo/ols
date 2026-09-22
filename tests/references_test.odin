@@ -340,30 +340,63 @@ reference_open_document_alias_uses_live_reference_and_rename_results :: proc(t: 
 	server.setup_index(server.get_builtin_path())
 	source_uri := common.create_uri(source_file, context.temp_allocator)
 	if !testing.expect(t, server.document_open(source_uri.uri, strings.clone("package lib\nTarget :: 1\n"), &common.config, nil) == .None) do return
+	disk_uri := common.create_uri(disk_file, context.temp_allocator)
+	document := server.document_get(source_uri.uri)
+	if !testing.expect(t, document != nil) do return
+	fresh_locations, fresh_ok := server.get_references(document, {line = 1, character = 0})
+	if !testing.expect(t, fresh_ok) do return
+	fresh_disk_locations := 0
+	for location in fresh_locations {
+		if strings.equal_fold(location.uri, disk_uri.uri) do fresh_disk_locations += 1
+	}
+	testing.expect(t, len(fresh_locations) == 2)
+	testing.expect(t, fresh_disk_locations == 1)
+	fresh_workspace, fresh_rename_ok := server.get_rename(document, "Renamed", {line = 1, character = 0})
+	if !testing.expect(t, fresh_rename_ok) do return
+	fresh_disk_edits, fresh_disk_found := fresh_workspace.changes[disk_uri.uri]
+	testing.expect(t, fresh_disk_found)
+	testing.expect(t, len(fresh_disk_edits) == 1)
+	server.document_release(document)
+
 	live_path := strings.concatenate({root, "/node_modules/../lib/main.odin"}, context.temp_allocator)
 	live_uri := common.create_uri(live_path, context.temp_allocator)
 	if !testing.expect(t, server.document_open(live_uri.uri, strings.clone("package lib\nfirst := Target\nsecond := Target\n"), &common.config, nil) == .None) do return
-
-	document := server.document_get(source_uri.uri)
+	document = server.document_get(source_uri.uri)
 	if !testing.expect(t, document != nil) do return
 	defer server.document_release(document)
+
 	locations, ok := server.get_references(document, {line = 1, character = 0})
 	if !testing.expect(t, ok) do return
 	live_locations := 0
 	for location in locations {
 		if strings.equal_fold(location.uri, live_uri.uri) do live_locations += 1
-		if strings.equal_fold(location.uri, common.create_uri(disk_file, context.temp_allocator).uri) do testing.expect(t, false)
+		if strings.equal_fold(location.uri, disk_uri.uri) do testing.expect(t, false)
 	}
 	testing.expect(t, len(locations) == 3)
 	testing.expect(t, live_locations == 2)
 
 	workspace, rename_ok := server.get_rename(document, "Renamed", {line = 1, character = 0})
 	if !testing.expect(t, rename_ok) do return
-	_, disk_found := workspace.changes[common.create_uri(disk_file, context.temp_allocator).uri]
+	_, disk_found := workspace.changes[disk_uri.uri]
 	testing.expect(t, !disk_found)
 	live_edits, live_found := workspace.changes[live_uri.uri]
 	testing.expect(t, live_found)
 	testing.expect(t, len(live_edits) == 2)
+
+	if !testing.expect(t, server.document_close(live_uri.uri) == .None) do return
+	closed_locations, closed_ok := server.get_references(document, {line = 1, character = 0})
+	if !testing.expect(t, closed_ok) do return
+	closed_disk_locations := 0
+	for location in closed_locations {
+		if strings.equal_fold(location.uri, disk_uri.uri) do closed_disk_locations += 1
+	}
+	testing.expect(t, len(closed_locations) == 2)
+	testing.expect(t, closed_disk_locations == 1)
+	closed_workspace, closed_rename_ok := server.get_rename(document, "Renamed", {line = 1, character = 0})
+	if !testing.expect(t, closed_rename_ok) do return
+	closed_disk_edits, closed_disk_found := closed_workspace.changes[disk_uri.uri]
+	testing.expect(t, closed_disk_found)
+	testing.expect(t, len(closed_disk_edits) == 1)
 }
 
 @(test)
