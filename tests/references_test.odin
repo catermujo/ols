@@ -73,6 +73,82 @@ reference_candidate_cache_reuses_and_invalidates_scan :: proc(t: ^testing.T) {
 }
 
 @(test)
+reference_candidate_graph_reaches_importers_without_unrelated_reads :: proc(t: ^testing.T) {
+	root, err := os.make_directory_temp("", "ols-reference-graph-*", context.temp_allocator)
+	if !testing.expect(t, err == nil) do return
+	defer os.remove_all(root)
+
+	lib, _ := filepath.join({root, "lib"}, context.temp_allocator)
+	direct, _ := filepath.join({root, "direct"}, context.temp_allocator)
+	transitive, _ := filepath.join({root, "transitive"}, context.temp_allocator)
+	app, _ := filepath.join({root, "app"}, context.temp_allocator)
+	unrelated, _ := filepath.join({root, "unrelated"}, context.temp_allocator)
+	collection, _ := filepath.join({root, "collection"}, context.temp_allocator)
+	dep, _ := filepath.join({collection, "dep"}, context.temp_allocator)
+	if !testing.expect(t, os.make_directory(lib) == nil) do return
+	if !testing.expect(t, os.make_directory(direct) == nil) do return
+	if !testing.expect(t, os.make_directory(transitive) == nil) do return
+	if !testing.expect(t, os.make_directory(app) == nil) do return
+	if !testing.expect(t, os.make_directory(unrelated) == nil) do return
+	if !testing.expect(t, os.make_directory(collection) == nil) do return
+	if !testing.expect(t, os.make_directory(dep) == nil) do return
+
+	lib_file, _ := filepath.join({lib, "source.odin"}, context.temp_allocator)
+	direct_file, _ := filepath.join({direct, "main.odin"}, context.temp_allocator)
+	sibling_file, _ := filepath.join({direct, "sibling.odin"}, context.temp_allocator)
+	transitive_file, _ := filepath.join({transitive, "main.odin"}, context.temp_allocator)
+	app_file, _ := filepath.join({app, "main.odin"}, context.temp_allocator)
+	unrelated_file, _ := filepath.join({unrelated, "main.odin"}, context.temp_allocator)
+	dep_file, _ := filepath.join({dep, "source.odin"}, context.temp_allocator)
+
+	testing.expect(t, os.write_entire_file(lib_file, "package lib\nTarget :: 1\n") == nil)
+	testing.expect(t, os.write_entire_file(direct_file, "package direct\nimport \"../lib\"\n") == nil)
+	testing.expect(t, os.write_entire_file(sibling_file, "package direct\n") == nil)
+	testing.expect(t, os.write_entire_file(transitive_file, "package transitive\nimport \"../direct\"\n") == nil)
+	testing.expect(t, os.write_entire_file(app_file, "package app\nimport \"col:dep\"\n") == nil)
+	testing.expect(t, os.write_entire_file(unrelated_file, "package unrelated\nTarget :: 1\n") == nil)
+	testing.expect(t, os.write_entire_file(dep_file, "package dep\nTarget :: 1\n") == nil)
+
+	old_folders := common.config.workspace_folders
+	old_collections := common.config.collections
+	common.config.workspace_folders = make([dynamic]common.WorkspaceFolder, context.temp_allocator)
+	append(&common.config.workspace_folders, common.WorkspaceFolder{uri = common.create_uri(root, context.temp_allocator).uri})
+	common.config.collections = make(map[string]string, context.temp_allocator)
+	common.config.collections["col"] = collection
+	defer {
+		server.reference_candidate_cache_reset()
+		common.config.workspace_folders = old_folders
+		common.config.collections = old_collections
+	}
+
+	server.reference_candidate_cache_reset()
+	lib_candidates := make(map[string]struct{}, context.temp_allocator)
+	server.collect_workspace_reference_candidates(lib, &lib_candidates)
+	_, found := lib_candidates[lib_file]
+	testing.expect(t, found)
+	_, found = lib_candidates[direct_file]
+	testing.expect(t, found)
+	_, found = lib_candidates[sibling_file]
+	testing.expect(t, found)
+	_, found = lib_candidates[transitive_file]
+	testing.expect(t, found)
+	_, found = lib_candidates[app_file]
+	testing.expect(t, !found)
+	_, found = lib_candidates[unrelated_file]
+	testing.expect(t, !found)
+
+	if !testing.expect(t, os.write_entire_file(unrelated_file, "package unrelated\n\"\n") == nil) do return
+	dep_candidates := make(map[string]struct{}, context.temp_allocator)
+	server.collect_workspace_reference_candidates(dep, &dep_candidates)
+	_, found = dep_candidates[dep_file]
+	testing.expect(t, found)
+	_, found = dep_candidates[app_file]
+	testing.expect(t, found)
+	_, found = dep_candidates[unrelated_file]
+	testing.expect(t, !found)
+}
+
+@(test)
 reference_enum_value_initialize_rhs :: proc(t: ^testing.T) {
 	source := test.Source {
 		main = `package test
