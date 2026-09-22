@@ -90,6 +90,13 @@ reference_path_is_excluded :: proc(fullpath: string) -> bool {
 	return false
 }
 
+reference_normalize_path :: proc(fullpath: string) -> string {
+	normalized_path, err := filepath.clean(fullpath, context.temp_allocator)
+	if err != nil do normalized_path = fullpath
+	forward_path, _ := filepath.replace_separators(normalized_path, '/', context.temp_allocator)
+	return forward_path
+}
+
 reference_should_skip_dir :: proc(fullpath: string) -> bool {
 	forward_path, _ := filepath.replace_separators(fullpath, '/', context.temp_allocator)
 	dir_name := filepath.base(forward_path)
@@ -249,9 +256,10 @@ reference_open_document_source :: proc(fullpath: string) -> (string, bool) {
 }
 
 reference_open_document_path_is_skipped :: proc(fullpath: string) -> bool {
-	if reference_path_is_excluded(fullpath) do return true
+	normalized_path := reference_normalize_path(fullpath)
+	if reference_path_is_excluded(normalized_path) do return true
 
-	dir := filepath.dir(fullpath)
+	dir := filepath.dir(normalized_path)
 	for {
 		if reference_should_skip_dir(dir) do return true
 		parent := filepath.dir(dir)
@@ -264,14 +272,14 @@ reference_open_document_path_is_skipped :: proc(fullpath: string) -> bool {
 reference_workspace_path_is_in_scope :: proc(fullpath: string) -> bool {
 	if reference_open_document_path_is_skipped(fullpath) do return false
 
-	forward_path, _ := filepath.replace_separators(fullpath, '/', context.temp_allocator)
+	normalized_path := reference_normalize_path(fullpath)
 	for workspace in common.config.workspace_folders {
 		uri, valid := common.parse_uri(workspace.uri, context.temp_allocator)
 		if !valid do continue
-		root, _ := filepath.replace_separators(uri.path, '/', context.temp_allocator)
-		if strings.equal_fold(forward_path, root) ||
-		   (strings.has_prefix(forward_path, root) &&
-		    len(forward_path) > len(root) && forward_path[len(root)] == '/') {
+		root := reference_normalize_path(uri.path)
+		if strings.equal_fold(normalized_path, root) ||
+		   (strings.has_prefix(normalized_path, root) &&
+		    len(normalized_path) > len(root) && normalized_path[len(root)] == '/') {
 			return true
 		}
 	}

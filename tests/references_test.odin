@@ -251,6 +251,55 @@ reference_candidate_graph_invalidates_on_document_open_and_close :: proc(t: ^tes
 }
 
 @(test)
+reference_open_document_normalizes_ancestor_checks :: proc(t: ^testing.T) {
+	previous_allocator := context.allocator
+	context.allocator = runtime.default_allocator()
+	defer context.allocator = previous_allocator
+	root, err := os.make_directory_temp("", "ols-reference-normalized-path-*", context.temp_allocator)
+	if !testing.expect(t, err == nil) do return
+	defer os.remove_all(root)
+
+	lib, _ := filepath.join({root, "lib"}, context.temp_allocator)
+	if !testing.expect(t, os.make_directory(lib) == nil) do return
+	lib_file, _ := filepath.join({lib, "source.odin"}, context.temp_allocator)
+	if !testing.expect(t, os.write_entire_file(lib_file, "package lib\nTarget :: 1\n") == nil) do return
+
+	old_folders := common.config.workspace_folders
+	old_collections := common.config.collections
+	old_documents := server.document_storage.documents
+	old_free_allocators := server.document_storage.free_allocators
+	common.config.workspace_folders = make([dynamic]common.WorkspaceFolder, context.temp_allocator)
+	append(&common.config.workspace_folders, common.WorkspaceFolder{uri = common.create_uri(root, context.temp_allocator).uri})
+	common.config.collections = make(map[string]string, context.temp_allocator)
+	server.document_storage.documents = make(map[string]server.Document)
+	server.document_storage.free_allocators = nil
+	defer {
+		server.reference_candidate_cache_reset()
+		server.document_storage_shutdown()
+		server.free_index()
+		server.document_storage.documents = old_documents
+		server.document_storage.free_allocators = old_free_allocators
+		common.config.workspace_folders = old_folders
+		common.config.collections = old_collections
+	}
+
+	server.reference_candidate_cache_reset()
+	server.setup_index(server.get_builtin_path())
+	initial := make(map[string]struct{}, context.temp_allocator)
+	server.collect_workspace_reference_candidates(lib, &initial)
+
+	unsaved_path := strings.concatenate({root, "/node_modules/../allowed/main.odin"}, context.temp_allocator)
+	source := strings.clone("package allowed\nimport \"../lib\"\n")
+	uri := common.create_uri(unsaved_path, context.temp_allocator)
+	if !testing.expect(t, server.document_open(uri.uri, source, &common.config, nil) == .None) do return
+
+	candidates := make(map[string]struct{}, context.temp_allocator)
+	server.collect_workspace_reference_candidates(lib, &candidates)
+	_, found := candidates[unsaved_path]
+	testing.expect(t, found)
+}
+
+@(test)
 reference_enum_value_initialize_rhs :: proc(t: ^testing.T) {
 	source := test.Source {
 		main = `package test
