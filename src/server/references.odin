@@ -24,8 +24,22 @@ ReferenceCandidateCacheEntry :: struct {
 	created: time.Time,
 }
 
+ReferenceImportPackage :: struct {
+	paths:  [dynamic]string,
+	imports: map[string]struct{},
+}
+
+ReferenceImportGraph :: struct {
+	packages:  map[string]ReferenceImportPackage,
+	all_paths: [dynamic]string,
+	complete:  bool,
+}
+
 @(thread_local)
 reference_candidate_cache: map[string]ReferenceCandidateCacheEntry
+
+@(thread_local)
+reference_import_graph: ReferenceImportGraph
 
 reference_candidate_cache_reset :: proc() {
 	allocator := runtime.default_allocator()
@@ -36,6 +50,20 @@ reference_candidate_cache_reset :: proc() {
 	}
 	delete(reference_candidate_cache)
 	reference_candidate_cache = nil
+
+	for pkg, entry in reference_import_graph.packages {
+		for fullpath in entry.paths do delete(fullpath, allocator)
+		delete(entry.paths)
+		for imported_pkg in entry.imports {
+			delete(imported_pkg, allocator)
+		}
+		delete(entry.imports)
+		delete(pkg, allocator)
+	}
+	delete(reference_import_graph.packages)
+	for fullpath in reference_import_graph.all_paths do delete(fullpath, allocator)
+	delete(reference_import_graph.all_paths)
+	reference_import_graph = {}
 }
 
 reference_path_is_excluded :: proc(fullpath: string) -> bool {
@@ -153,17 +181,181 @@ source_may_reference_package :: proc(fullpath, pkg_name, src: string) -> bool {
 	return false
 }
 
-collect_workspace_reference_candidates :: proc(pkg_name: string, paths: ^map[string]struct{}) {
-	if entry, ok := reference_candidate_cache[pkg_name]; ok && time.since(entry.created) < 30 * time.Second {
-		for fullpath in entry.paths do add_reference_candidate_path(paths, fullpath)
-		return
+reference_import_graph_add_path :: proc(paths: ^[dynamic]string, fullpath: string) {
+	for existing in paths^ {
+		if strings.equal_fold(existing, fullpath) do return
+	}
+	append(paths, strings.clone(fullpath, runtime.default_allocator()))
+}
+
+reference_import_graph_package :: proc(pkg_name: string) -> ^ReferenceImportPackage {
+	if reference_import_graph.packages == nil {
+		reference_import_graph.packages = make(map[string]ReferenceImportPackage, 32, runtime.default_allocator())
+	}
+	if _, ok := reference_import_graph.packages[pkg_name]; !ok {
+		key := strings.clone(pkg_name, runtime.default_allocator())
+		reference_import_graph.packages[key] = {}
 	}
 
-	// Rebuild on expiry, and cap memory when many packages are queried.
-	if len(reference_candidate_cache) >= 16 || (pkg_name in reference_candidate_cache) {
-		reference_candidate_cache_reset()
+	pkg := &reference_import_graph.packages[pkg_name]
+	if pkg.imports == nil {
+		pkg.imports = make(map[string]struct{}, 8, runtime.default_allocator())
+	}
+	return pkg
+}
+
+reference_import_graph_import_path :: proc(file_dir, import_path: string) -> (string, bool) {
+	if len(import_path) < 2 || import_path[0] != '"' || import_path[len(import_path) - 1] != '"' {
+		return "", false
 	}
 
+	if i := strings.index(import_path, ":"); i != -1 && i > 1 && i < len(import_path) - 1 {
+		collection := import_path[1:i]
+		p := import_path[i + 1:len(import_path) - 1]
+		dir, ok := common.config.collections[collection]
+		if !ok {
+			return "", false
+		}
+
+		full := path.join(elems = {dir, p}, allocator = context.temp_allocator)
+		full = path.clean(full, context.temp_allocator)
+		forward_full, _ := filepath.replace_separators(full, '/', context.temp_allocator)
+		return forward_full, true
+	}
+
+	full := path.join(
+		elems = {file_dir, import_path[1:len(import_path) - 1]},
+		allocator = context.temp_allocator,
+	)
+	full = path.clean(full, context.temp_allocator)
+	forward_full, _ := filepath.replace_separators(full, '/', context.temp_allocator)
+	return forward_full, true
+}
+
+reference_import_graph_build :: proc() {
+	allocator := runtime.default_allocator()
+	previous_allocator := context.allocator
+	defer context.allocator = previous_allocator
+	context.allocator = allocator
+	reference_import_graph.packages = make(map[string]ReferenceImportPackage, 32, allocator)
+	reference_import_graph.complete = true
+
+	scan_arena: runtime.Arena
+	_ = runtime.arena_init(&scan_arena, mem.Megabyte * 2, allocator)
+	defer runtime.arena_destroy(&scan_arena)
+
+	for workspace in common.config.workspace_folders {
+		uri, valid := common.parse_uri(workspace.uri, context.temp_allocator)
+		if !valid {
+			reference_import_graph.complete = false
+			continue
+		}
+
+		physical_root, _ := os.get_absolute_path(uri.path, context.temp_allocator)
+		w := os.walker_create(uri.path)
+		defer os.walker_destroy(&w)
+		for info in os.walker_walk(&w) {
+			logical_path := info.fullpath
+			if physical_root != "" && strings.has_prefix(info.fullpath, physical_root) &&
+			   len(info.fullpath) > len(physical_root) && info.fullpath[len(physical_root)] == '/' {
+				logical_path = fmt.tprintf("%s%s", uri.path, info.fullpath[len(physical_root):])
+			}
+			if info.type == .Directory {
+				if reference_should_skip_dir(logical_path) do os.walker_skip_dir(&w)
+				continue
+			}
+			if info.fullpath == "" || !strings.has_suffix(info.name, ".odin") do continue
+
+			context.allocator = allocator
+			reference_import_graph_add_path(&reference_import_graph.all_paths, logical_path)
+			runtime.arena_free_all(&scan_arena)
+			data, err := os.read_entire_file(info.fullpath, runtime.arena_allocator(&scan_arena))
+			if err != nil {
+				log.warnf("failed to read file for reference graph %v: %v", info.fullpath, err)
+				reference_import_graph.complete = false
+				continue
+			}
+			src := string(data)
+			if common.has_ignore_file_tag(src) || file_when_tags_exclude(src, logical_path) {
+				context.allocator = allocator
+				continue
+			}
+
+			p := parser.Parser {flags = {.Optional_Semicolons}}
+			if !is_ols_builtin_file(info.fullpath) {
+				p.err = log_error_handler
+				p.warn = log_warning_handler
+			}
+
+			pkg := new(ast.Package)
+			pkg.kind = .Normal
+			pkg.fullpath = logical_path
+			pkg.name = filepath.base(filepath.dir(logical_path))
+			file := ast.File {fullpath = logical_path, src = src, pkg = pkg}
+
+			ok := parse_file(&p, &file, runtime.arena_allocator(&scan_arena))
+			if !ok || file.syntax_error_count > 0 || file.pkg_decl == nil {
+				reference_import_graph.complete = false
+				context.allocator = allocator
+				runtime.arena_free_all(&scan_arena)
+				continue
+			}
+
+			context.allocator = allocator
+			file_dir, _ := filepath.replace_separators(filepath.dir(logical_path), '/', context.temp_allocator)
+			pkg_name, _ := filepath.replace_separators(file_dir, '/', context.temp_allocator)
+			package_info := reference_import_graph_package(pkg_name)
+			reference_import_graph_add_path(&package_info.paths, logical_path)
+
+			for imp in file.imports {
+				imported_pkg, import_ok := reference_import_graph_import_path(file_dir, imp.fullpath)
+				if !import_ok {
+					reference_import_graph.complete = false
+					continue
+				}
+				if imported_pkg not_in package_info.imports {
+					package_info.imports[strings.clone(imported_pkg, allocator)] = {}
+				}
+			}
+
+			runtime.arena_free_all(&scan_arena)
+		}
+	}
+}
+
+reference_import_graph_contains :: proc(packages: map[string]struct{}, pkg_name: string) -> bool {
+	if _, ok := packages[pkg_name]; ok {
+		return true
+	}
+	for existing in packages {
+		if strings.equal_fold(existing, pkg_name) do return true
+	}
+	return false
+}
+
+collect_reference_import_graph_packages :: proc(pkg_name: string, packages: ^map[string]struct{}) {
+	packages^[strings.clone(pkg_name, context.temp_allocator)] = {}
+
+	for {
+		new_packages := make([dynamic]string, 0, context.temp_allocator)
+		for candidate_name, candidate in reference_import_graph.packages {
+			if reference_import_graph_contains(packages^, candidate_name) do continue
+			for imported_pkg in candidate.imports {
+				if reference_import_graph_contains(packages^, imported_pkg) {
+					append(&new_packages, candidate_name)
+					break
+				}
+			}
+		}
+
+		if len(new_packages) == 0 do break
+		for candidate_name in new_packages {
+			packages^[strings.clone(candidate_name, context.temp_allocator)] = {}
+		}
+	}
+}
+
+collect_workspace_reference_candidates_unbounded :: proc(pkg_name: string, paths: ^map[string]struct{}) {
 	scan_arena: runtime.Arena
 	_ = runtime.arena_init(&scan_arena, mem.Megabyte * 2, runtime.default_allocator())
 	defer runtime.arena_destroy(&scan_arena)
@@ -193,6 +385,42 @@ collect_workspace_reference_candidates :: proc(pkg_name: string, paths: ^map[str
 			}
 			if source_may_reference_package(logical_path, pkg_name, string(data)) {
 				add_reference_candidate_path(paths, logical_path)
+			}
+		}
+	}
+}
+
+collect_workspace_reference_candidates :: proc(pkg_name: string, paths: ^map[string]struct{}) {
+	if entry, ok := reference_candidate_cache[pkg_name]; ok && time.since(entry.created) < 30 * time.Second {
+		for fullpath in entry.paths do add_reference_candidate_path(paths, fullpath)
+		return
+	}
+
+	// Rebuild on expiry, and cap memory when many packages are queried.
+	if len(reference_candidate_cache) >= 16 || (pkg_name in reference_candidate_cache) {
+		reference_candidate_cache_reset()
+	}
+
+	if is_builtin_pkg(pkg_name) {
+		collect_workspace_reference_candidates_unbounded(pkg_name, paths)
+	} else {
+		if reference_import_graph.packages == nil {
+			reference_import_graph_build()
+		}
+
+		if !reference_import_graph.complete {
+			for fullpath in reference_import_graph.all_paths {
+				add_reference_candidate_path(paths, fullpath)
+			}
+		} else {
+			reachable := make(map[string]struct{}, 16, context.temp_allocator)
+			collect_reference_import_graph_packages(pkg_name, &reachable)
+			for candidate_name in reachable {
+				if package_info, ok := reference_import_graph.packages[candidate_name]; ok {
+					for fullpath in package_info.paths {
+						add_reference_candidate_path(paths, fullpath)
+					}
+				}
 			}
 		}
 	}

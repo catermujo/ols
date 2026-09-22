@@ -319,7 +319,9 @@ document_apply_changes :: proc(
 		}
 	}
 
-	return document_refresh(document, config, writer)
+	err := document_refresh(document, config, writer)
+	reference_candidate_cache_reset()
+	return err
 }
 
 document_close :: proc(uri_string: string) -> common.Error {
