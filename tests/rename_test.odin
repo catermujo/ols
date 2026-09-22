@@ -27,6 +27,103 @@ ast_prepare_rename_enum_field_list :: proc (t: ^testing.T) {
 }
 
 @(test)
+ast_rename_implicit_enum_in_proc_default :: proc(t: ^testing.T) {
+	source := test.Source{
+		main = `package test
+My_Enum :: enum {
+	One,
+	Four,
+}
+my_fn :: proc(value: My_Enum = .Fo{*}ur) {}
+`,
+	}
+	test.expect_rename_text(t, &source, "Renamed", `package test
+My_Enum :: enum {
+	One,
+	Renamed,
+}
+my_fn :: proc(value: My_Enum = .Renamed) {}
+`)
+}
+
+@(test)
+ast_rename_struct_field_in_map_literal_value :: proc(t: ^testing.T) {
+	source := test.Source{
+		main = `package test
+Foo :: struct {
+	foo{*}: int,
+}
+main :: proc() {
+	values: map[int]Foo = {0 = {foo = 1}}
+	_ = values
+}
+`,
+	}
+	test.expect_rename_text(t, &source, "renamed", `package test
+Foo :: struct {
+	renamed: int,
+}
+main :: proc() {
+	values: map[int]Foo = {0 = {renamed = 1}}
+	_ = values
+}
+`)
+}
+
+@(test)
+ast_rename_nested_named_arguments_by_owner :: proc(t: ^testing.T) {
+	struct_source := test.Source{
+		main = `package test
+Foo :: struct {
+	bar{*}: int,
+}
+make :: proc(bar: int) -> int {
+	return bar
+}
+main :: proc() {
+	_ = Foo{bar = make(bar = 1)}
+}
+`,
+	}
+	test.expect_rename_text(t, &struct_source, "field", `package test
+Foo :: struct {
+	field: int,
+}
+make :: proc(bar: int) -> int {
+	return bar
+}
+main :: proc() {
+	_ = Foo{field = make(bar = 1)}
+}
+`)
+
+	param_source := test.Source{
+		main = `package test
+Foo :: struct {
+	bar: int,
+}
+make :: proc(bar{*}: int) -> int {
+	return bar
+}
+main :: proc() {
+	_ = Foo{bar = make(bar = 1)}
+}
+`,
+	}
+	test.expect_rename_text(t, &param_source, "param", `package test
+Foo :: struct {
+	bar: int,
+}
+make :: proc(param: int) -> int {
+	return param
+}
+main :: proc() {
+	_ = Foo{bar = make(param = 1)}
+}
+`)
+}
+
+@(test)
 ast_prepare_rename_enum_field_list_with_constant :: proc (t: ^testing.T) {
 	source := test.Source {
 		main     = `package test
@@ -131,6 +228,29 @@ y := Al{*}ias{}
 }
 `,
 		config = {enable_definition_skip_aliases = true},
+	}
+	test.expect_rename_text(t, &source, "Renamed", `package test
+Renamed :: struct {}
+Alias :: Renamed
+main :: proc() {
+x: Renamed
+y := Renamed{}
+}
+`)
+}
+
+@(test)
+ast_rename_alias_without_definition_skip :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `package test
+Target :: struct {}
+Alias :: Target
+main :: proc() {
+x: Alias
+y := Al{*}ias{}
+}
+`,
+		config = {enable_definition_skip_aliases = false},
 	}
 	test.expect_rename_text(t, &source, "Renamed", `package test
 Target :: struct {}
@@ -360,4 +480,28 @@ ast_prepare_rename_struct_field_bit_set :: proc(t: ^testing.T) {
 
 	range := common.Range{start = {line = 8, character = 17}, end = {line = 8, character = 20}}
 	test.expect_prepare_rename_range(t, &source, range)
+}
+
+@(test)
+ast_rename_struct_field_in_map_literal_key :: proc(t: ^testing.T) {
+	source := test.Source{
+		main = `package test
+Foo :: struct {
+	key{*}: int,
+}
+main :: proc() {
+	values: map[Foo]int = {{key = 1} = 2}
+	_ = values
+}
+`,
+	}
+	test.expect_rename_text(t, &source, "renamed", `package test
+Foo :: struct {
+	renamed: int,
+}
+main :: proc() {
+	values: map[Foo]int = {{renamed = 1} = 2}
+	_ = values
+}
+`)
 }

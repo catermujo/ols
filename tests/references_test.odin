@@ -20,6 +20,53 @@ reference_candidate_same_package :: proc(t: ^testing.T) {
 }
 
 @(test)
+ast_references_identifier_inside_with :: proc(t: ^testing.T) {
+	source := test.Source{
+		main = `package test
+cleanup :: proc() {}
+scoped :: proc() #scope_exit(.implicit, cleanup()) {}
+target :: proc() {}
+main :: proc() {
+	target()
+	with scoped() {
+		tar{*}get()
+	}
+}
+`,
+	}
+
+	locations := []common.Location{
+		{range = {start = {line = 3, character = 0}, end = {line = 3, character = 6}}},
+		{range = {start = {line = 5, character = 1}, end = {line = 5, character = 7}}},
+		{range = {start = {line = 7, character = 2}, end = {line = 7, character = 8}}},
+	}
+	test.expect_reference_locations(t, &source, locations)
+}
+
+@(test)
+ast_references_skip_aliases_without_dropping_target_reference :: proc(t: ^testing.T) {
+	source := test.Source{
+		main = `package test
+Target :: struct {}
+Alias :: Target
+main :: proc() {
+	x: Alias
+	y: Tar{*}get
+}
+`,
+		config = {enable_definition_skip_aliases = true},
+	}
+
+	locations := []common.Location{
+		{range = {start = {line = 1, character = 0}, end = {line = 1, character = 6}}},
+		{range = {start = {line = 2, character = 9}, end = {line = 2, character = 15}}},
+		{range = {start = {line = 4, character = 4}, end = {line = 4, character = 9}}},
+		{range = {start = {line = 5, character = 4}, end = {line = 5, character = 10}}},
+	}
+	test.expect_reference_locations(t, &source, locations)
+}
+
+@(test)
 reference_candidate_relative_import :: proc(t: ^testing.T) {
 	testing.expect(t, server.source_may_reference_package(
 		"/repo/app/main.odin", "/repo/lib/math",
@@ -344,7 +391,7 @@ reference_open_document_alias_uses_live_reference_and_rename_results :: proc(t: 
 	document := server.document_get(source_uri.uri)
 	if !testing.expect(t, document != nil) do return
 	server.reference_resolution_test_reset()
-	fresh_locations, fresh_ok := server.get_references(document, {line = 1, character = 0})
+	fresh_locations, fresh_ok := server.get_references(document, {line = 1, character = 0}, config = &common.config)
 	if !testing.expect(t, fresh_ok) do return
 	first_parse_count := server.reference_resolution_test_parse_count_get()
 	testing.expect(t, first_parse_count > 0)
@@ -354,7 +401,7 @@ reference_open_document_alias_uses_live_reference_and_rename_results :: proc(t: 
 	}
 	testing.expect(t, len(fresh_locations) == 2)
 	testing.expect(t, fresh_disk_locations == 1)
-	fresh_workspace, fresh_rename_ok := server.get_rename(document, "Renamed", {line = 1, character = 0})
+	fresh_workspace, fresh_rename_ok := server.get_rename(document, "Renamed", {line = 1, character = 0}, &common.config)
 	if !testing.expect(t, fresh_rename_ok) do return
 	fresh_disk_edits, fresh_disk_found := fresh_workspace.changes[disk_uri.uri]
 	testing.expect(t, fresh_disk_found)
@@ -370,7 +417,7 @@ reference_open_document_alias_uses_live_reference_and_rename_results :: proc(t: 
 	if !testing.expect(t, document != nil) do return
 	defer server.document_release(document)
 
-	locations, ok := server.get_references(document, {line = 1, character = 0})
+	locations, ok := server.get_references(document, {line = 1, character = 0}, config = &common.config)
 	if !testing.expect(t, ok) do return
 	live_locations := 0
 	for location in locations {
@@ -380,7 +427,7 @@ reference_open_document_alias_uses_live_reference_and_rename_results :: proc(t: 
 	testing.expect(t, len(locations) == 3)
 	testing.expect(t, live_locations == 2)
 
-	workspace, rename_ok := server.get_rename(document, "Renamed", {line = 1, character = 0})
+	workspace, rename_ok := server.get_rename(document, "Renamed", {line = 1, character = 0}, &common.config)
 	if !testing.expect(t, rename_ok) do return
 	_, disk_found := workspace.changes[disk_uri.uri]
 	testing.expect(t, !disk_found)
@@ -389,7 +436,7 @@ reference_open_document_alias_uses_live_reference_and_rename_results :: proc(t: 
 	testing.expect(t, len(live_edits) == 2)
 
 	if !testing.expect(t, server.document_close(live_uri.uri) == .None) do return
-	closed_locations, closed_ok := server.get_references(document, {line = 1, character = 0})
+	closed_locations, closed_ok := server.get_references(document, {line = 1, character = 0}, config = &common.config)
 	if !testing.expect(t, closed_ok) do return
 	closed_disk_locations := 0
 	for location in closed_locations {
@@ -397,7 +444,7 @@ reference_open_document_alias_uses_live_reference_and_rename_results :: proc(t: 
 	}
 	testing.expect(t, len(closed_locations) == 2)
 	testing.expect(t, closed_disk_locations == 1)
-	closed_workspace, closed_rename_ok := server.get_rename(document, "Renamed", {line = 1, character = 0})
+	closed_workspace, closed_rename_ok := server.get_rename(document, "Renamed", {line = 1, character = 0}, &common.config)
 	if !testing.expect(t, closed_rename_ok) do return
 	closed_disk_edits, closed_disk_found := closed_workspace.changes[disk_uri.uri]
 	testing.expect(t, closed_disk_found)

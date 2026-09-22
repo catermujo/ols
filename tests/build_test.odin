@@ -1,12 +1,128 @@
 package tests
 
+import "base:runtime"
+
+import "core:encoding/json"
 import "core:os"
 import "core:mem/virtual"
 import "core:path/filepath"
+import "core:strings"
 import "core:testing"
 
 import "src:common"
 import "src:server"
+
+@(test)
+document_index_tracks_open_change_and_close :: proc(t: ^testing.T) {
+	previous_allocator := context.allocator
+	context.allocator = runtime.default_allocator()
+	defer context.allocator = previous_allocator
+
+	root, err := os.make_directory_temp("", "ols-document-index-*", context.temp_allocator)
+	if !testing.expect(t, err == nil) do return
+	defer os.remove_all(root)
+	file_path, _ := filepath.join({root, "main.odin"})
+	disk_text := "package lifecycle\nDisk_Value :: 1\n"
+	if !testing.expect(t, os.write_entire_file(file_path, transmute([]u8)disk_text) == nil) do return
+
+	old_documents := server.document_storage.documents
+	old_free_allocators := server.document_storage.free_allocators
+	server.document_storage.documents = make(map[string]server.Document)
+	server.document_storage.free_allocators = nil
+	defer {
+		server.document_storage_shutdown()
+		server.document_storage.documents = old_documents
+		server.document_storage.free_allocators = old_free_allocators
+	}
+
+	server.setup_index(server.get_builtin_path())
+	defer server.free_index()
+	uri := common.create_uri(file_path, context.temp_allocator)
+	_ = server.index_file(uri, disk_text)
+	_, found := server.lookup("Disk_Value", root, file_path)
+	testing.expect(t, found)
+
+	open_text := strings.clone("package lifecycle\nOpen_Value :: 1\n")
+	if !testing.expect(t, server.document_open(uri.uri, open_text, &common.config, nil) == .None) do return
+	_, found = server.lookup("Disk_Value", root, file_path)
+	testing.expect(t, !found)
+	_, found = server.lookup("Open_Value", root, file_path)
+	testing.expect(t, found)
+	watcher_text := "package lifecycle\nWatcher_Value :: 1\n"
+	if !testing.expect(t, os.write_entire_file(file_path, transmute([]u8)watcher_text) == nil) do return
+	watcher_params_text := strings.join(
+		{`{"changes":[{"uri":"`, uri.uri, `","type":2}]}`},
+		"",
+		context.temp_allocator,
+	)
+	watcher_params, watcher_parse_error := json.parse_string(watcher_params_text, parse_integers = true)
+	if !testing.expect(t, watcher_parse_error == .None) do return
+	if !testing.expect(
+		t,
+		server.notification_did_change_watched_files(
+			watcher_params,
+			i64(0),
+			&common.config,
+			nil,
+		) == .None,
+	) {
+		return
+	}
+	_, found = server.lookup("Open_Value", root, file_path)
+	testing.expect(t, found)
+	_, found = server.lookup("Watcher_Value", root, file_path)
+	testing.expect(t, !found)
+	delete_params_text := strings.join(
+		{`{"changes":[{"uri":"`, uri.uri, `","type":3}]}`},
+		"",
+		context.temp_allocator,
+	)
+	delete_params, delete_parse_error := json.parse_string(delete_params_text, parse_integers = true)
+	if !testing.expect(t, delete_parse_error == .None) do return
+	if !testing.expect(
+		t,
+		server.notification_did_change_watched_files(delete_params, i64(0), &common.config, nil) == .None,
+	) {
+		return
+	}
+	_, found = server.lookup("Open_Value", root, file_path)
+	testing.expect(t, found)
+	save_params_text := strings.join(
+		{`{"textDocument":{"uri":"`, uri.uri, `"}}`},
+		"",
+		context.temp_allocator,
+	)
+	save_params, parse_error := json.parse_string(save_params_text, parse_integers = true)
+	if !testing.expect(t, parse_error == .None) do return
+	if !testing.expect(
+		t,
+		server.notification_did_save(save_params, i64(0), &common.config, nil) == .None,
+	) {
+		return
+	}
+	_, found = server.lookup("Open_Value", root, file_path)
+	testing.expect(t, found)
+
+	changed_text := strings.clone("package lifecycle\nChanged_Value :: 1\n")
+	changes := make([dynamic]server.TextDocumentContentChangeEvent, context.temp_allocator)
+	append(&changes, server.TextDocumentContentChangeEvent{text = changed_text})
+	if !testing.expect(
+		t,
+		server.document_apply_changes(uri.uri, changes, nil, &common.config, nil) == .None,
+	) {
+		return
+	}
+	_, found = server.lookup("Open_Value", root, file_path)
+	testing.expect(t, !found)
+	_, found = server.lookup("Changed_Value", root, file_path)
+	testing.expect(t, found)
+
+	if !testing.expect(t, server.document_close(uri.uri) == .None) do return
+	_, found = server.lookup("Changed_Value", root, file_path)
+	testing.expect(t, !found)
+	_, found = server.lookup("Watcher_Value", root, file_path)
+	testing.expect(t, found)
+}
 
 @(test)
 ignore_file_tag_only_in_header :: proc(t: ^testing.T) {

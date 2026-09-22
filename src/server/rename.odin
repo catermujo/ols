@@ -8,10 +8,10 @@ import "core:strings"
 
 import "src:common"
 
-get_rename :: proc(document: ^Document, new_text: string, position: common.Position) -> (WorkspaceEdit, bool) {
+get_rename :: proc(document: ^Document, new_text: string, position: common.Position, config: ^common.Config) -> (WorkspaceEdit, bool) {
 	locations: []common.Location
 	found := false
-	if common.config.enable_compiler_semantics {
+	if config.enable_compiler_semantics {
 		locations, found = semantics_references(document, position, current_file_only = false, include_declaration = true)
 	}
 	if !found {
@@ -36,7 +36,7 @@ get_rename :: proc(document: ^Document, new_text: string, position: common.Posit
 		get_globals(document.ast, &ast_context)
 		get_locals(&ast_context, &position_context)
 
-		locations, _ = resolve_references(document, &ast_context, &position_context)
+		locations, _ = resolve_references(document, &ast_context, &position_context, config)
 	}
 
 	changes := make(map[string][dynamic]TextEdit, 0, context.temp_allocator)
