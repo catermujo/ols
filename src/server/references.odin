@@ -232,6 +232,84 @@ reference_import_graph_import_path :: proc(file_dir, import_path: string) -> (st
 	return forward_full, true
 }
 
+reference_import_graph_path_exists :: proc(fullpath: string) -> bool {
+	for existing in reference_import_graph.all_paths {
+		if strings.equal_fold(existing, fullpath) do return true
+	}
+	return false
+}
+
+reference_open_document_source :: proc(fullpath: string) -> (string, bool) {
+	for _, &document in document_storage.documents {
+		if document.client_owned && strings.equal_fold(document.fullpath, fullpath) {
+			return string(document.text[:document.used_text]), true
+		}
+	}
+	return "", false
+}
+
+reference_workspace_path_is_in_scope :: proc(fullpath: string) -> bool {
+	if reference_path_is_excluded(fullpath) do return false
+
+	forward_path, _ := filepath.replace_separators(fullpath, '/', context.temp_allocator)
+	for workspace in common.config.workspace_folders {
+		uri, valid := common.parse_uri(workspace.uri, context.temp_allocator)
+		if !valid do continue
+		root, _ := filepath.replace_separators(uri.path, '/', context.temp_allocator)
+		if strings.equal_fold(forward_path, root) ||
+		   (strings.has_prefix(forward_path, root) &&
+		    len(forward_path) > len(root) && forward_path[len(root)] == '/') {
+			return true
+		}
+	}
+	return false
+}
+
+reference_import_graph_process_file :: proc(
+	logical_path, src: string,
+	scan_arena: ^runtime.Arena,
+	allocator: runtime.Allocator,
+) {
+	reference_import_graph_add_path(&reference_import_graph.all_paths, logical_path)
+	if common.has_ignore_file_tag(src) || file_when_tags_exclude(src, logical_path) do return
+
+	context.allocator = runtime.arena_allocator(scan_arena)
+	p := parser.Parser {flags = {.Optional_Semicolons}}
+	if !is_ols_builtin_file(logical_path) {
+		p.err = log_error_handler
+		p.warn = log_warning_handler
+	}
+
+	pkg := new(ast.Package)
+	pkg.kind = .Normal
+	pkg.fullpath = logical_path
+	pkg.name = filepath.base(filepath.dir(logical_path))
+	file := ast.File {fullpath = logical_path, src = src, pkg = pkg}
+
+	ok := parse_file(&p, &file, runtime.arena_allocator(scan_arena))
+	context.allocator = allocator
+	if !ok || file.syntax_error_count > 0 || file.pkg_decl == nil {
+		reference_import_graph.complete = false
+		return
+	}
+
+	file_dir, _ := filepath.replace_separators(filepath.dir(logical_path), '/', context.temp_allocator)
+	pkg_name, _ := filepath.replace_separators(file_dir, '/', context.temp_allocator)
+	package_info := reference_import_graph_package(pkg_name)
+	reference_import_graph_add_path(&package_info.paths, logical_path)
+
+	for imp in file.imports {
+		imported_pkg, import_ok := reference_import_graph_import_path(file_dir, imp.fullpath)
+		if !import_ok {
+			reference_import_graph.complete = false
+			continue
+		}
+		if imported_pkg not_in package_info.imports {
+			package_info.imports[strings.clone(imported_pkg, allocator)] = {}
+		}
+	}
+}
+
 reference_import_graph_build :: proc() {
 	allocator := runtime.default_allocator()
 	previous_allocator := context.allocator
@@ -267,59 +345,38 @@ reference_import_graph_build :: proc() {
 			if info.fullpath == "" || !strings.has_suffix(info.name, ".odin") do continue
 
 			context.allocator = allocator
-			reference_import_graph_add_path(&reference_import_graph.all_paths, logical_path)
 			runtime.arena_free_all(&scan_arena)
-			data, err := os.read_entire_file(info.fullpath, runtime.arena_allocator(&scan_arena))
-			if err != nil {
-				log.warnf("failed to read file for reference graph %v: %v", info.fullpath, err)
-				reference_import_graph.complete = false
-				continue
-			}
-			src := string(data)
-			if common.has_ignore_file_tag(src) || file_when_tags_exclude(src, logical_path) {
-				context.allocator = allocator
-				continue
-			}
-
-			p := parser.Parser {flags = {.Optional_Semicolons}}
-			if !is_ols_builtin_file(info.fullpath) {
-				p.err = log_error_handler
-				p.warn = log_warning_handler
-			}
-
-			pkg := new(ast.Package)
-			pkg.kind = .Normal
-			pkg.fullpath = logical_path
-			pkg.name = filepath.base(filepath.dir(logical_path))
-			file := ast.File {fullpath = logical_path, src = src, pkg = pkg}
-
-			ok := parse_file(&p, &file, runtime.arena_allocator(&scan_arena))
-			if !ok || file.syntax_error_count > 0 || file.pkg_decl == nil {
-				reference_import_graph.complete = false
-				context.allocator = allocator
-				runtime.arena_free_all(&scan_arena)
-				continue
-			}
-
-			context.allocator = allocator
-			file_dir, _ := filepath.replace_separators(filepath.dir(logical_path), '/', context.temp_allocator)
-			pkg_name, _ := filepath.replace_separators(file_dir, '/', context.temp_allocator)
-			package_info := reference_import_graph_package(pkg_name)
-			reference_import_graph_add_path(&package_info.paths, logical_path)
-
-			for imp in file.imports {
-				imported_pkg, import_ok := reference_import_graph_import_path(file_dir, imp.fullpath)
-				if !import_ok {
+			src, open := reference_open_document_source(logical_path)
+			if !open {
+				data, err := os.read_entire_file(info.fullpath, runtime.arena_allocator(&scan_arena))
+				if err != nil {
+					log.warnf("failed to read file for reference graph %v", info.fullpath)
 					reference_import_graph.complete = false
 					continue
 				}
-				if imported_pkg not_in package_info.imports {
-					package_info.imports[strings.clone(imported_pkg, allocator)] = {}
-				}
+				src = string(data)
 			}
-
+			reference_import_graph_process_file(logical_path, src, &scan_arena, allocator)
+			context.allocator = allocator
 			runtime.arena_free_all(&scan_arena)
 		}
+	}
+
+	for _, &document in document_storage.documents {
+		if !document.client_owned || !strings.has_suffix(document.fullpath, ".odin") do continue
+		if !reference_workspace_path_is_in_scope(document.fullpath) do continue
+		if reference_import_graph_path_exists(document.fullpath) do continue
+
+		context.allocator = allocator
+		runtime.arena_free_all(&scan_arena)
+		reference_import_graph_process_file(
+			document.fullpath,
+			string(document.text[:document.used_text]),
+			&scan_arena,
+			allocator,
+		)
+		context.allocator = allocator
+		runtime.arena_free_all(&scan_arena)
 	}
 }
 

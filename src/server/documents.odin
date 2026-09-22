@@ -181,7 +181,9 @@ document_open :: proc(uri_string: string, text: string, config: ^common.Config, 
 
 		document_setup(document)
 
-		if err := document_refresh(document, config, writer); err != .None {
+		err := document_refresh(document, config, writer)
+		reference_candidate_cache_reset()
+		if err != .None {
 			return err
 		}
 	} else {
@@ -196,7 +198,9 @@ document_open :: proc(uri_string: string, text: string, config: ^common.Config, 
 
 		document_setup(&document)
 
-		if err := document_refresh(&document, config, writer); err != .None {
+		err := document_refresh(&document, config, writer)
+		reference_candidate_cache_reset()
+		if err != .None {
 			return err
 		}
 
@@ -351,6 +355,7 @@ document_close :: proc(uri_string: string) -> common.Error {
 	delete(document.package_name)
 
 	document.used_text = 0
+	reference_candidate_cache_reset()
 
 	return .None
 }
