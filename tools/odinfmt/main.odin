@@ -17,6 +17,42 @@ Args :: struct {
 	stdin:  bool `usage:"formats code from standard input"`,
 	path:   string `args:"pos=0" usage:"set the file or directory to format"`,
 	config: string `usage:"path to a config file"`,
+	exclude_dirs: string `usage:"comma-separated directory names to skip when formatting directories recursively"`,
+}
+
+default_skip_dirs := []string{
+	".git",
+	".jj",
+	".hg",
+	".svn",
+	".emcache",
+	".venv",
+	"__pycache__",
+	"node_modules",
+	"build",
+	"dist",
+	"out",
+	"vendor",
+}
+
+make_skip_dir_set :: proc(extra_dirs: string) -> map[string]struct{} {
+	skip_dirs := make(map[string]struct{}, context.temp_allocator)
+	for dir in default_skip_dirs {
+		skip_dirs[dir] = {}
+	}
+
+	for entry in strings.split(extra_dirs, ",", context.temp_allocator) {
+		dir := strings.trim_space(entry)
+		if dir != "" {
+			skip_dirs[strings.clone(dir, context.temp_allocator)] = {}
+		}
+	}
+	return skip_dirs
+}
+
+should_skip_directory :: proc(fullpath: string, skip_dirs: map[string]struct{}) -> bool {
+	normalized, _ := filepath.replace_separators(fullpath, '/', context.temp_allocator)
+	return filepath.base(normalized) in skip_dirs
 }
 
 format_file :: proc(
@@ -113,11 +149,15 @@ main :: proc() {
 			}
 		}
 	} else if os.is_dir(args.path) {
+		skip_dirs := make_skip_dir_set(args.exclude_dirs)
 		files: [dynamic]string
 		w := os.walker_create(args.path)
 		defer os.walker_destroy(&w)
 		for info in os.walker_walk(&w) {
 			if info.type == .Directory {
+				if should_skip_directory(info.fullpath, skip_dirs) {
+					os.walker_skip_dir(&w)
+				}
 				continue
 			}
 
