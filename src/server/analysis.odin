@@ -979,7 +979,7 @@ untyped_basic_match_score :: proc(value: SymbolUntypedValue, expected: Symbol) -
 	return score, true, true
 }
 
-proc_field_type_for_call :: proc(field: ^ast.Field) -> (type: ^ast.Expr, ok: bool) #optional_ok {
+proc_field_type_for_call :: proc(field: ^ast.Field) -> (type: ^ast.Expr, is_variadic: bool) {
 	if field == nil {
 		return nil, false
 	}
@@ -1004,7 +1004,7 @@ proc_field_from_list_at :: proc(fields: []^ast.Field, index: int) -> (field: ^as
 	return nil, false
 }
 
-get_proc_return_type_from_index :: proc(fields: []^ast.Field, index: int) -> (type: ^ast.Expr, ok: bool) #optional_ok {
+get_proc_return_type_from_index :: proc(fields: []^ast.Field, index: int) -> (type: ^ast.Expr, is_variadic: bool) {
 	field := proc_field_from_list_at(fields, index) or_return
 	return proc_field_type_for_call(field)
 }
@@ -1100,8 +1100,8 @@ proc_symbols_compatible :: proc(ast_context: ^AstContext, actual, expected: Symb
 	for i in 0..<a_args {
 		af := get_proc_arg_type_from_index(a, i) or_continue
 		bf := get_proc_arg_type_from_index(b, i) or_continue
-		at := proc_field_type_for_call(af)
-		bt := proc_field_type_for_call(bf)
+		at, _ := proc_field_type_for_call(af)
+		bt, _ := proc_field_type_for_call(bf)
 		if expr_contains_poly(at) || expr_contains_poly(bt) {
 			continue
 		}
@@ -1124,8 +1124,8 @@ proc_symbols_compatible :: proc(ast_context: ^AstContext, actual, expected: Symb
 		return false
 	}
 	for i := 0; i < a_returns; i += 1 {
-		at := get_proc_return_type_from_index(a.return_types, i)
-		bt := get_proc_return_type_from_index(b.return_types, i)
+		at, _ := get_proc_return_type_from_index(a.return_types, i)
+		bt, _ := get_proc_return_type_from_index(b.return_types, i)
 		if expr_contains_poly(at) || expr_contains_poly(bt) {
 			continue
 		}
