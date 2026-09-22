@@ -110,9 +110,10 @@ reference_resolved_cache_key :: proc(
 	current_document_uri: string,
 	current_file_only: bool,
 	include_declaration: bool,
+	skip_aliases: bool,
 ) -> string {
 	return fmt.tprintf(
-		"%s\x00%s\x00%s\x00%s\x00%d:%d:%d:%d:%d:%v:%v",
+		"%s\x00%s\x00%s\x00%s\x00%d:%d:%d:%d:%d:%v:%v:%v",
 		symbol.uri,
 		symbol.pkg,
 		target_name,
@@ -124,6 +125,7 @@ reference_resolved_cache_key :: proc(
 		int(resolve_flag),
 		current_file_only,
 		include_declaration,
+		skip_aliases,
 	)
 }
 
@@ -716,7 +718,12 @@ prepare_references :: proc(
 	} else if position_context.field_value != nil &&
 	   !is_expr_basic_lit(position_context.field_value.field) &&
 	   position_in_node(position_context.field_value.field, position_context.position) {
-		if position_context.comp_lit != nil {
+		if field_value_is_named_call_arg(position_context) {
+			symbol, ok = resolve_location_proc_param_name(ast_context, position_context)
+			if !ok {
+				return
+			}
+		} else if position_context.comp_lit != nil {
 			symbol, ok = resolve_location_comp_lit_field(ast_context, position_context)
 			if !ok {
 				return
@@ -845,10 +852,97 @@ get_target_name :: proc(position_context: ^DocumentPositionContext, resolve_flag
 	return ""
 }
 
+reference_symbols_match :: proc(a, b: Symbol) -> bool {
+	return strings.equal_fold(a.uri, b.uri) && a.range == b.range
+}
+
+reference_location_in_list :: proc(uri: string, range: common.Range, locations: []common.Location) -> bool {
+	for location in locations {
+		if strings.equal_fold(uri, location.uri) && range == location.range {
+			return true
+		}
+	}
+	return false
+}
+
+collect_alias_definition_locations :: proc(
+	document: ^Document,
+	search_symbol: Symbol,
+	config: ^common.Config,
+	allocator := context.allocator,
+) -> []common.Location {
+	locations := make([dynamic]common.Location, 0, allocator)
+	if config == nil || !config.enable_definition_skip_aliases {
+		return locations[:]
+	}
+
+	alias_context := make_ast_context(
+		document.ast,
+		document.imports,
+		document.package_name,
+		document.uri.uri,
+		document.fullpath,
+		allocator,
+	)
+	get_globals(document.ast, &alias_context)
+	alias_context.current_package = alias_context.document_package
+
+	for _, global in alias_context.globals {
+		if global.name_expr == nil || global.expr == nil {
+			continue
+		}
+		#partial switch _ in global.expr.derived {
+		case ^ast.Ident, ^ast.Selector_Expr:
+		case:
+			continue
+		}
+
+		alias_ident, alias_ident_ok := global.name_expr.derived.(^ast.Ident)
+		if !alias_ident_ok do continue
+		alias_symbol, alias_symbol_ok := resolve_location_identifier(&alias_context, alias_ident^)
+		if !alias_symbol_ok do continue
+		resolved := skip_definition_aliases(&alias_context, alias_symbol, alias_ident.name)
+		if reference_symbols_match(resolved, alias_symbol) || !reference_symbols_match(resolved, search_symbol) {
+			continue
+		}
+
+		append(&locations, common.Location {
+			uri   = strings.clone(document.uri.uri, allocator),
+			range = common.get_token_range(global.name_expr, document.ast.src),
+		})
+	}
+	return locations[:]
+}
+
+reference_node_name :: proc(node: ^ast.Node, symbol: Symbol) -> string {
+	if node != nil {
+		#partial switch n in node.derived {
+		case ^ast.Ident:
+			return n.name
+		case ^ast.Implicit_Selector_Expr:
+			return n.field.name
+		}
+	}
+	return symbol.name
+}
+
+reference_resolve_alias :: proc(
+	ast_context: ^AstContext,
+	symbol: Symbol,
+	name: string,
+	config: ^common.Config,
+) -> Symbol {
+	if config == nil || !config.enable_definition_skip_aliases || name == "" {
+		return symbol
+	}
+	return skip_definition_aliases(ast_context, symbol, name)
+}
+
 resolve_references :: proc(
 	document: ^Document,
 	ast_context: ^AstContext,
 	position_context: ^DocumentPositionContext,
+	config: ^common.Config,
 	current_file_only := false,
 	include_declaration := true,
 ) -> (
@@ -864,16 +958,27 @@ resolve_references :: proc(
 	if !ok {
 		return {}, true
 	}
-
 	target_name := get_target_name(position_context, resolve_flag)
+	search_symbol := reference_resolve_alias(ast_context, symbol, target_name, config)
+	alias_definition_locations := collect_alias_definition_locations(
+		document,
+		search_symbol,
+		config,
+		ast_context.allocator,
+	)
+
+	if config != nil && config.enable_definition_skip_aliases {
+		target_name = ""
+	}
 	current_document_uri := current_file_only ? document.uri.uri : ""
 	cache_key := reference_resolved_cache_key(
-		symbol,
+		search_symbol,
 		resolve_flag,
 		target_name,
 		current_document_uri,
 		current_file_only,
 		include_declaration,
+		config != nil && config.enable_definition_skip_aliases,
 	)
 	if cached, ok := reference_resolved_cache_load(cache_key, ast_context.allocator); ok {
 		return cached, true
@@ -882,11 +987,21 @@ resolve_references :: proc(
 	symbols_and_nodes := resolve_entire_file_for_references(document, ast_context.allocator, resolve_flag, target_name)
 
 	for k, v in symbols_and_nodes {
-		if strings.equal_fold(v.symbol.uri, symbol.uri) && v.symbol.range == symbol.range {
+		resolved_symbol := reference_resolve_alias(
+			ast_context,
+			v.symbol,
+			reference_node_name(v.node, v.symbol),
+			config,
+		)
+		if reference_symbols_match(resolved_symbol, search_symbol) {
 			node_uri := common.create_uri(v.node.pos.file, ast_context.allocator)
 			range := common.get_token_range(v.node^, ast_context.file.src)
+			if reference_location_in_list(node_uri.uri, range, alias_definition_locations) {
+				continue
+			}
 
-			if !include_declaration && v.symbol.range == range && strings.equal_fold(node_uri.uri, symbol.uri) {
+			if !include_declaration && resolved_symbol.range == range &&
+			   strings.equal_fold(node_uri.uri, resolved_symbol.uri) {
 				// This is the declaration and so we skip it
 				continue
 			}
@@ -905,18 +1020,18 @@ resolve_references :: proc(
 		}
 	}
 
-	if .Local in symbol.flags || current_file_only {
+	if .Local in search_symbol.flags || current_file_only {
 		reference_resolved_cache_store(cache_key, locations[:])
 		return locations[:], true
 	}
 
 	candidate_paths := make(map[string]struct{}, 0, context.temp_allocator)
-	if !is_builtin_pkg(symbol.pkg) {
-		collect_reference_package_files(symbol.pkg, &candidate_paths)
+	if !is_builtin_pkg(search_symbol.pkg) {
+		collect_reference_package_files(search_symbol.pkg, &candidate_paths)
 	}
 
 	when !ODIN_TEST {
-		collect_workspace_reference_candidates(symbol.pkg, &candidate_paths)
+		collect_workspace_reference_candidates(search_symbol.pkg, &candidate_paths)
 	}
 
 	live_candidate_paths := make(map[string]string, 0, context.temp_allocator)
@@ -1030,25 +1145,40 @@ resolve_references :: proc(
 		document_setup(&document)
 
 		parse_imports(&document, &common.config)
+		alias_definition_locations = collect_alias_definition_locations(
+			&document,
+			search_symbol,
+			config,
+			context.allocator,
+		)
 
 		in_pkg := false
 		for pkg in document.imports {
-			if strings.equal_fold(pkg.name, symbol.pkg) {
+			if strings.equal_fold(pkg.name, search_symbol.pkg) {
 				in_pkg = true
 				continue
 			}
 		}
 
-		if in_pkg || strings.equal_fold(symbol.pkg, document.package_name) {
+		if in_pkg || strings.equal_fold(search_symbol.pkg, document.package_name) {
 			symbols_and_nodes := resolve_entire_file_for_references(&document, context.allocator, resolve_flag, target_name)
 			for k, v in symbols_and_nodes {
-				if strings.equal_fold(v.symbol.uri, symbol.uri) && v.symbol.range == symbol.range {
+				resolved_symbol := reference_resolve_alias(
+					ast_context,
+					v.symbol,
+					reference_node_name(v.node, v.symbol),
+					config,
+				)
+				if reference_symbols_match(resolved_symbol, search_symbol) {
 					node_uri := common.create_uri(v.node.pos.file, ast_context.allocator)
 					range := common.get_token_range(v.node^, string(document.text))
+					if reference_location_in_list(node_uri.uri, range, alias_definition_locations) {
+						continue
+					}
 
 					if !include_declaration &&
-					   v.symbol.range == range &&
-					   strings.equal_fold(node_uri.uri, symbol.uri) {
+					   resolved_symbol.range == range &&
+					   strings.equal_fold(node_uri.uri, resolved_symbol.uri) {
 						// This is the declaration and so we skip it
 						continue
 					}
@@ -1075,6 +1205,7 @@ get_references :: proc(
 	position: common.Position,
 	current_file_only := false,
 	include_declaration := true,
+	config: ^common.Config,
 ) -> (
 	[]common.Location,
 	bool,
@@ -1104,6 +1235,7 @@ get_references :: proc(
 		document,
 		&ast_context,
 		&position_context,
+		config,
 		current_file_only,
 		include_declaration = include_declaration,
 	)

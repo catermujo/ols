@@ -32,6 +32,28 @@ ast_goto_bit_set_comp_literal :: proc(t: ^testing.T) {
 }
 
 @(test)
+ast_goto_identifier_inside_with :: proc(t: ^testing.T) {
+	source := test.Source{
+		main = `package test
+cleanup :: proc() {}
+scoped :: proc() #scope_exit(.implicit, cleanup()) {}
+target :: proc() {}
+main :: proc() {
+	with local := target; scoped() {
+		local()
+		tar{*}get()
+	}
+}
+`,
+	}
+
+	location := common.Location{
+		range = {start = {line = 3, character = 0}, end = {line = 3, character = 6}},
+	}
+	test.expect_definition_locations(t, &source, {location})
+}
+
+@(test)
 ast_goto_bit_set_index_enumerated_array :: proc(t: ^testing.T) {
 	source := test.Source {
 		main = `package test
@@ -1156,5 +1178,24 @@ My_Enum :: enum {One, Four}
 	test.expect_definition_locations(t, &source, {{
 		uri = "file://test/dep/package.odin",
 		range = {{line = 1, character = 22}, {line = 1, character = 26}},
+	}})
+}
+
+@(test)
+ast_goto_local_declared_by_with :: proc(t: ^testing.T) {
+	source := test.Source{
+		main = `package test
+cleanup :: proc() {}
+scoped :: proc() #scope_exit(.implicit, cleanup()) {}
+target :: proc() {}
+main :: proc() {
+	with local := target; scoped() {
+		loc{*}al()
+	}
+}
+`,
+	}
+	test.expect_definition_locations(t, &source, {{
+		range = {{line = 5, character = 6}, {line = 5, character = 11}},
 	}})
 }

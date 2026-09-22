@@ -67,6 +67,14 @@ DocumentPositionContext :: struct {
 	directive:              ^ast.Basic_Directive,
 }
 
+field_value_is_named_call_arg :: proc(position_context: ^DocumentPositionContext) -> bool {
+	return position_context.call != nil &&
+		position_context.call_arg != nil &&
+		position_context.field_value != nil &&
+		position_context.call_arg.pos.offset == position_context.field_value.pos.offset &&
+		position_context.call_arg.end.offset == position_context.field_value.end.offset
+}
+
 
 get_stmt_attrs :: proc(decl: ^ast.Stmt) -> []^ast.Attribute {
 	if decl == nil {
@@ -759,6 +767,11 @@ get_document_position_node :: proc(node: ^ast.Node, position_context: ^DocumentP
 		get_document_position(n.results, position_context)
 	case ^ast.Defer_Stmt:
 		get_document_position(n.stmt, position_context)
+	case ^ast.With_Stmt:
+		get_document_position_label(n.label, position_context)
+		get_document_position(n.init, position_context)
+		get_document_position(n.opener, position_context)
+		get_document_position(n.body, position_context)
 	case ^ast.For_Stmt:
 		get_document_position_label(n.label, position_context)
 		get_document_position(n.init, position_context)

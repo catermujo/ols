@@ -738,7 +738,12 @@ expect_reference_locations :: proc(
 	setup(src)
 	defer teardown(src)
 
-	locations, got_references := server.get_references(src.document, cursor, include_declaration = include_declaration)
+	locations, got_references := server.get_references(
+		src.document,
+		cursor,
+		include_declaration = include_declaration,
+		config = &src.config,
+	)
 	if !got_references && len(expect_locations) > 0 {
 		log.error("No references found.")
 		return
@@ -808,7 +813,7 @@ expect_rename_text :: proc(t: ^testing.T, src: ^Source, new_text, expect_text: s
 	setup(src)
 	defer teardown(src)
 
-	workspace, ok := server.get_rename(src.document, new_text, cursor)
+	workspace, ok := server.get_rename(src.document, new_text, cursor, &src.config)
 	if !ok {
 		log.error("Failed to get rename workspace edit")
 		return

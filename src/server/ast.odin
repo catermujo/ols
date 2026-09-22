@@ -848,6 +848,11 @@ free_ast_node :: proc(node: ^ast.Node, allocator: mem.Allocator) {
 		free_ast(n.results, allocator)
 	case ^ast.Defer_Stmt:
 		free_ast(n.stmt, allocator)
+	case ^ast.With_Stmt:
+		free_ast(n.label, allocator)
+		free_ast(n.init, allocator)
+		free_ast(n.opener, allocator)
+		free_ast(n.body, allocator)
 	case ^ast.For_Stmt:
 		free_ast(n.label, allocator)
 		free_ast(n.init, allocator)
@@ -920,6 +925,7 @@ free_ast_node :: proc(node: ^ast.Node, allocator: mem.Allocator) {
 		free_ast(n.type, allocator)
 		free_ast(n.specialization, allocator)
 	case ^ast.Proc_Type:
+		free_ast(n.captures, allocator)
 		free_ast(n.params, allocator)
 		free_ast(n.results, allocator)
 	case ^ast.Pointer_Type:

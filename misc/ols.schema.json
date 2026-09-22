@@ -123,7 +123,12 @@
 		"enable_overload_resolution": {
 			"type": "boolean",
 			"description": "Enable go-to-definition to resolve overloaded procedures from procedure groups based on call arguments.",
-			"default": false
+			"default": true
+		},
+		"enable_definition_skip_aliases": {
+			"type": "boolean",
+			"description": "Make navigation and rename follow direct and chained aliases to their underlying named declaration.",
+			"default": true
 		},
 		"enable_document_links": {
 			"type": "boolean",

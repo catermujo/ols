@@ -747,6 +747,8 @@ request_initialize :: proc(
 	config.odin_command = ""
 	config.checker_args = ""
 	config.enable_fake_method = false
+	config.enable_overload_resolution = true
+	config.enable_definition_skip_aliases = true
 	config.enable_procedure_snippet = true
 	config.enable_checker_only_saved = true
 	config.enable_checker_workspace_diagnostics = false
@@ -1210,6 +1212,10 @@ notification_did_open :: proc(
 	}
 
 	document := document_get(open_params.textDocument.uri)
+	if document == nil {
+		return .InternalError
+	}
+	defer document_release(document)
 
 	check_unused_imports(document, config)
 
@@ -1250,6 +1256,7 @@ notification_did_change :: proc(
 		document := document_get(change_params.textDocument.uri)
 		if document != nil {
 			check_unused_imports(document, config)
+			document_release(document)
 		}
 		push_diagnostics(writer)
 	}
@@ -1306,10 +1313,6 @@ notification_did_save :: proc(
 		return .ParseError
 	}
 
-	if result := index_file(uri, save_params.text); result != .None {
-		return result
-	}
-
 	fullpath := uri.path
 
 	when ODIN_OS == .Windows {
@@ -1320,6 +1323,23 @@ notification_did_save :: proc(
 	corrected_uri := common.create_uri(fullpath, context.temp_allocator)
 
 	document := document_get(save_params.textDocument.uri)
+	if document != nil {
+		defer document_release(document)
+	}
+
+	save_text := save_params.text
+	if "text" not_in params_object {
+		if document != nil {
+			save_text = string(document.text[:document.used_text])
+		} else if data, err := os.read_entire_file(uri.path, context.temp_allocator); err == nil {
+			save_text = string(data)
+		}
+	}
+
+	if result := index_file(uri, save_text); result != .None {
+		return result
+	}
+
 	if document != nil {
 		check_unused_imports(document, config)
 	}
@@ -1623,7 +1643,7 @@ request_rename :: proc(params: json.Value, id: RequestId, config: ^common.Config
 	}
 
 	workspace_edit: WorkspaceEdit
-	workspace_edit, ok = get_rename(document, rename_param.newName, rename_param.position)
+	workspace_edit, ok = get_rename(document, rename_param.newName, rename_param.position, config)
 
 	if !ok {
 		return .InternalError
@@ -1671,6 +1691,7 @@ request_references :: proc(
 		document,
 		reference_param.position,
 		include_declaration = reference_param.ctx.includeDeclaration,
+		config = config,
 	)
 
 	if !ok {
@@ -1709,7 +1730,7 @@ request_highlights :: proc(
 	}
 
 	locations: []common.Location
-	locations, ok = get_references(document, highlight_param.position, true)
+	locations, ok = get_references(document, highlight_param.position, true, config = config)
 
 	if !ok {
 		return .InternalError
@@ -1783,16 +1804,20 @@ notification_did_change_watched_files :: proc(
 
 	package_aliases_changed := false
 	for change in did_change_watched_files_params.changes {
+		uri, ok := common.parse_uri(change.uri, context.temp_allocator)
+		if !ok {
+			continue
+		}
+		if document := &document_storage.documents[uri.path]; document != nil && document.client_owned {
+			continue
+		}
+
 		if change.type == cast(int)FileChangeType.Deleted {
-			if uri, ok := common.parse_uri(change.uri, context.temp_allocator); ok {
-				remove_index_file(uri)
-			}
+			remove_index_file(uri)
 			package_aliases_changed = true
 		} else {
-			if uri, ok := common.parse_uri(change.uri, context.temp_allocator); ok {
-				if data, err := os.read_entire_file(uri.path, context.temp_allocator); err == nil {
-					index_file(uri, cast(string)data)
-				}
+			if data, err := os.read_entire_file(uri.path, context.temp_allocator); err == nil {
+				index_file(uri, cast(string)data)
 			}
 			if change.type == cast(int)FileChangeType.Created {
 				package_aliases_changed = true

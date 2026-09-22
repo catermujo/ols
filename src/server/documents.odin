@@ -186,6 +186,11 @@ document_open :: proc(uri_string: string, text: string, config: ^common.Config, 
 		if err != .None {
 			return err
 		}
+		if document.ast.syntax_error_count == 0 {
+			if err := index_file(document.uri, string(document.text[:document.used_text])); err != .None {
+				return err
+			}
+		}
 	} else {
 		document := Document {
 			uri                = uri,
@@ -202,6 +207,11 @@ document_open :: proc(uri_string: string, text: string, config: ^common.Config, 
 		reference_candidate_cache_reset()
 		if err != .None {
 			return err
+		}
+		if document.ast.syntax_error_count == 0 {
+			if err := index_file(document.uri, string(document.text[:document.used_text])); err != .None {
+				return err
+			}
 		}
 
 		document_storage.documents[strings.clone(uri.path)] = document
@@ -325,6 +335,9 @@ document_apply_changes :: proc(
 
 	err := document_refresh(document, config, writer)
 	reference_candidate_cache_reset()
+	if err == .None && document.ast.syntax_error_count == 0 {
+		err = index_file(document.uri, string(document.text[:document.used_text]))
+	}
 	return err
 }
 
@@ -343,6 +356,7 @@ document_close :: proc(uri_string: string) -> common.Error {
 		log.errorf("Client called close on a document that was never opened: %v ", uri.path)
 		return .InvalidRequest
 	}
+	disk_uri := common.create_uri(uri.path, context.temp_allocator)
 
 	document_free_allocator(document.allocator)
 	document.allocator = nil
@@ -356,6 +370,13 @@ document_close :: proc(uri_string: string) -> common.Error {
 
 	document.used_text = 0
 	reference_candidate_cache_reset()
+
+	if err := remove_index_file(disk_uri); err != .None {
+		return err
+	}
+	if data, err := os.read_entire_file(disk_uri.path, context.temp_allocator); err == nil {
+		return index_file(disk_uri, string(data))
+	}
 
 	return .None
 }
@@ -438,6 +459,8 @@ parse_document :: proc(document: ^Document, config: ^common.Config) -> ([]Parser
 	invalidate_document_symbol_cache(document)
 	virtual.arena_free_all(document.allocator)
 
+	previous_allocator := context.allocator
+	defer context.allocator = previous_allocator
 	context.allocator = virtual.arena_allocator(document.allocator)
 
 	dir := filepath.base(filepath.dir(document.fullpath))

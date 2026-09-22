@@ -79,9 +79,9 @@ Options:
 
 - `enable_fake_methods`: Turn on fake methods completion. This is currently highly experimental and requires client snippet support.
 
-- `enable_overload_resolution`: Enable go-to-definition to resolve overloaded procedures from procedure groups based on call arguments.
+- `enable_overload_resolution`: Enable go-to-definition to resolve overloaded procedures from procedure groups based on call arguments. _(Enabled by default)_
 
-- `enable_definition_skip_aliases`: Make go-to-definition follow direct and chained aliases to their underlying named declaration. _(Disabled by default)_
+- `enable_definition_skip_aliases`: Make navigation and rename follow direct and chained aliases to their underlying named declaration. _(Enabled by default)_
 
 - `enable_references`: Turns on finding references for a symbol. _(Enabled by default)_
 
@@ -153,6 +153,10 @@ Options:
 ### Odinfmt configurations
 
 Odinfmt reads configuration through `odinfmt.json`.
+
+When formatting a directory, odinfmt skips common generated and dependency directories. These include `.git`, `.jj`, `.hg`, `.svn`, `.emcache`, `.venv`, `__pycache__`, `node_modules`, `build`, `dist`, `out`, and `vendor`.
+
+Use `-exclude-dirs:<dir1,dir2,...>` to skip more directory names during recursive formatting.
 
 Example:
 

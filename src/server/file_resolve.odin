@@ -391,7 +391,15 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 	case ^ast.Field_Value:
 		data.position_context.field_value = n
 
-		if data.flag != .None && data.position_context.comp_lit != nil {
+		if data.flag != .None && field_value_is_named_call_arg(data.position_context) {
+			if symbol, ok := resolve_location_proc_param_name(data.ast_context, data.position_context); ok {
+				data.symbols[cast(uintptr)node] = SymbolAndNode {
+					node   = n.field,
+					symbol = symbol,
+				}
+			}
+			resolve_node(n.value, data)
+		} else if data.flag != .None && data.position_context.comp_lit != nil {
 			data.position_context.position = n.pos.offset
 
 			if symbol, ok := resolve_location_comp_lit_field(data.ast_context, data.position_context); ok {
@@ -401,6 +409,9 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 				}
 			}
 
+			if _, _, ok := unwrap_comp_literal(n.field); ok {
+				resolve_node(n.field, data)
+			}
 			resolve_node(n.value, data)
 		} else if data.flag != .None && data.position_context.call != nil {
 			if symbol, ok := resolve_location_proc_param_name(data.ast_context, data.position_context); ok {
@@ -418,14 +429,15 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 		local_scope(data, n.body)
 
 		get_locals_proc_param_and_results(data.ast_context.file, n^, data.ast_context, data.position_context)
+		old_function := data.position_context.function
+		data.position_context.function = n
+		defer data.position_context.function = old_function
 
 		resolve_node(n.type, data)
 
 		for clause in n.where_clauses {
 			resolve_node(clause, data)
 		}
-
-		data.position_context.function = cast(^ast.Proc_Lit)node
 
 		append(&data.position_context.functions, data.position_context.function)
 
@@ -524,12 +536,14 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 		resolve_node(n.expr, data)
 	case ^ast.Call_Expr:
 		old_call := data.ast_context.call
+		old_call_arg := data.position_context.call_arg
 
 		data.position_context.call = n
 		data.ast_context.call = n
 
 		defer {
 			data.position_context.call = old_call
+			data.position_context.call_arg = old_call_arg
 		}
 
 		resolve_node(n.expr, data)
@@ -538,6 +552,7 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 
 		for arg in n.args {
 			data.position_context.position = arg.pos.offset
+			data.position_context.call_arg = arg
 			resolve_node(arg, data)
 		}
 	case ^ast.Index_Expr:
@@ -582,6 +597,12 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 		resolve_nodes(n.results, data)
 	case ^ast.Defer_Stmt:
 		resolve_node(n.stmt, data)
+	case ^ast.With_Stmt:
+		local_scope(data, n)
+		resolve_node(n.label, data)
+		resolve_node(n.init, data)
+		resolve_node(n.opener, data)
+		resolve_node(n.body, data)
 	case ^ast.Case_Clause:
 		local_scope(data, n)
 		resolve_nodes(n.list, data)
