@@ -300,6 +300,73 @@ reference_open_document_normalizes_ancestor_checks :: proc(t: ^testing.T) {
 }
 
 @(test)
+reference_open_document_alias_uses_live_reference_and_rename_results :: proc(t: ^testing.T) {
+	previous_allocator := context.allocator
+	context.allocator = runtime.default_allocator()
+	defer context.allocator = previous_allocator
+	root, err := os.make_directory_temp("", "ols-reference-open-alias-*", context.temp_allocator)
+	if !testing.expect(t, err == nil) do return
+	defer os.remove_all(root)
+
+	lib, _ := filepath.join({root, "lib"}, context.temp_allocator)
+	node_modules, _ := filepath.join({root, "node_modules"}, context.temp_allocator)
+	if !testing.expect(t, os.make_directory(lib) == nil) do return
+	if !testing.expect(t, os.make_directory(node_modules) == nil) do return
+	source_file, _ := filepath.join({lib, "source.odin"}, context.temp_allocator)
+	disk_file, _ := filepath.join({lib, "main.odin"}, context.temp_allocator)
+	if !testing.expect(t, os.write_entire_file(source_file, "package lib\nTarget :: 1\n") == nil) do return
+	if !testing.expect(t, os.write_entire_file(disk_file, "package lib\nstale := Target\n") == nil) do return
+
+	old_folders := common.config.workspace_folders
+	old_collections := common.config.collections
+	old_documents := server.document_storage.documents
+	old_free_allocators := server.document_storage.free_allocators
+	common.config.workspace_folders = make([dynamic]common.WorkspaceFolder, context.temp_allocator)
+	append(&common.config.workspace_folders, common.WorkspaceFolder{uri = common.create_uri(root, context.temp_allocator).uri})
+	common.config.collections = make(map[string]string, context.temp_allocator)
+	server.document_storage.documents = make(map[string]server.Document)
+	server.document_storage.free_allocators = nil
+	defer {
+		server.reference_candidate_cache_reset()
+		server.document_storage_shutdown()
+		server.free_index()
+		server.document_storage.documents = old_documents
+		server.document_storage.free_allocators = old_free_allocators
+		common.config.workspace_folders = old_folders
+		common.config.collections = old_collections
+	}
+
+	server.reference_candidate_cache_reset()
+	server.setup_index(server.get_builtin_path())
+	source_uri := common.create_uri(source_file, context.temp_allocator)
+	if !testing.expect(t, server.document_open(source_uri.uri, strings.clone("package lib\nTarget :: 1\n"), &common.config, nil) == .None) do return
+	live_path := strings.concatenate({root, "/node_modules/../lib/main.odin"}, context.temp_allocator)
+	live_uri := common.create_uri(live_path, context.temp_allocator)
+	if !testing.expect(t, server.document_open(live_uri.uri, strings.clone("package lib\nfirst := Target\nsecond := Target\n"), &common.config, nil) == .None) do return
+
+	document := server.document_get(source_uri.uri)
+	if !testing.expect(t, document != nil) do return
+	defer server.document_release(document)
+	locations, ok := server.get_references(document, {line = 1, character = 0})
+	if !testing.expect(t, ok) do return
+	live_locations := 0
+	for location in locations {
+		if strings.equal_fold(location.uri, live_uri.uri) do live_locations += 1
+		if strings.equal_fold(location.uri, common.create_uri(disk_file, context.temp_allocator).uri) do testing.expect(t, false)
+	}
+	testing.expect(t, len(locations) == 3)
+	testing.expect(t, live_locations == 2)
+
+	workspace, rename_ok := server.get_rename(document, "Renamed", {line = 1, character = 0})
+	if !testing.expect(t, rename_ok) do return
+	_, disk_found := workspace.changes[common.create_uri(disk_file, context.temp_allocator).uri]
+	testing.expect(t, !disk_found)
+	live_edits, live_found := workspace.changes[live_uri.uri]
+	testing.expect(t, live_found)
+	testing.expect(t, len(live_edits) == 2)
+}
+
+@(test)
 reference_enum_value_initialize_rhs :: proc(t: ^testing.T) {
 	source := test.Source {
 		main = `package test

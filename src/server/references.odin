@@ -240,19 +240,22 @@ reference_import_graph_import_path :: proc(file_dir, import_path: string) -> (st
 }
 
 reference_import_graph_path_exists :: proc(fullpath: string) -> bool {
+	normalized_path := reference_normalize_path(fullpath)
 	for existing in reference_import_graph.all_paths {
-		if strings.equal_fold(existing, fullpath) do return true
+		if strings.equal_fold(reference_normalize_path(existing), normalized_path) do return true
 	}
 	return false
 }
 
-reference_open_document_source :: proc(fullpath: string) -> (string, bool) {
+reference_open_document_source :: proc(fullpath: string) -> (string, string, bool) {
+	normalized_path := reference_normalize_path(fullpath)
 	for _, &document in document_storage.documents {
-		if document.client_owned && strings.equal_fold(document.fullpath, fullpath) {
-			return string(document.text[:document.used_text]), true
+		if document.client_owned &&
+		   strings.equal_fold(reference_normalize_path(document.fullpath), normalized_path) {
+			return string(document.text[:document.used_text]), document.fullpath, true
 		}
 	}
-	return "", false
+	return "", "", false
 }
 
 reference_open_document_path_is_skipped :: proc(fullpath: string) -> bool {
@@ -367,7 +370,7 @@ reference_import_graph_build :: proc() {
 
 			context.allocator = allocator
 			runtime.arena_free_all(&scan_arena)
-			src, open := reference_open_document_source(logical_path)
+			src, _, open := reference_open_document_source(logical_path)
 			if !open {
 				data, err := os.read_entire_file(info.fullpath, runtime.arena_allocator(&scan_arena))
 				if err != nil {
@@ -792,10 +795,26 @@ resolve_references :: proc(
 		collect_workspace_reference_candidates(symbol.pkg, &candidate_paths)
 	}
 
+	live_candidate_paths := make(map[string]string, 0, context.temp_allocator)
 	for fullpath in candidate_paths {
-		if !strings.equal_fold(fullpath, document.fullpath) {
-			append(&fullpaths, strings.clone(fullpath, ast_context.allocator))
+		_, document_path, open := reference_open_document_source(fullpath)
+		if !open do continue
+		normalized_path := reference_normalize_path(fullpath)
+		live_candidate_paths[strings.clone(normalized_path, context.temp_allocator)] = strings.clone(document_path, context.temp_allocator)
+	}
+
+	seen_candidate_paths := make(map[string]struct{}, 0, context.temp_allocator)
+	document_path := reference_normalize_path(document.fullpath)
+	for fullpath in candidate_paths {
+		normalized_path := reference_normalize_path(fullpath)
+		if strings.equal_fold(normalized_path, document_path) || normalized_path in seen_candidate_paths do continue
+		seen_candidate_paths[strings.clone(normalized_path, context.temp_allocator)] = {}
+
+		candidate_path := fullpath
+		if live_path, open := live_candidate_paths[normalized_path]; open {
+			candidate_path = live_path
 		}
+		append(&fullpaths, strings.clone(candidate_path, ast_context.allocator))
 	}
 
 	reset_ast_context(ast_context)
@@ -819,11 +838,15 @@ resolve_references :: proc(
 		dir := filepath.dir(fullpath)
 		base := filepath.base(dir)
 
-		data, err := os.read_entire_file(fullpath, context.allocator)
-
-		if err != nil {
-			log.errorf("failed to read entire file for indexing %v: %v", fullpath, err)
-			continue
+		data: []u8
+		if source, _, open := reference_open_document_source(fullpath); open {
+			data = transmute([]u8)source
+		} else {
+			data, err := os.read_entire_file(fullpath, context.allocator)
+			if err != nil {
+				log.errorf("failed to read entire file for indexing %v: %v", fullpath, err)
+				continue
+			}
 		}
 		if common.has_ignore_file_tag(string(data)) || file_when_tags_exclude(string(data), fullpath) {
 			continue
