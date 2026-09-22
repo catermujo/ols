@@ -158,8 +158,8 @@ source_may_reference_package :: proc(fullpath, pkg_name, src: string) -> bool {
 	}
 
 	file_dir := filepath.dir(fullpath)
-	forward_dir, _ := filepath.replace_separators(file_dir, '/', context.temp_allocator)
-	forward_pkg, _ := filepath.replace_separators(pkg_name, '/', context.temp_allocator)
+	forward_dir := reference_normalize_path(file_dir)
+	forward_pkg := reference_normalize_path(pkg_name)
 
 	if strings.equal_fold(forward_dir, forward_pkg) {
 		return true
@@ -748,7 +748,7 @@ resolve_references :: proc(
 	spall.trace(#procedure, document.fullpath)
 
 	locations := make([dynamic]common.Location, 0, ast_context.allocator)
-	fullpaths := make([dynamic]string, 0, ast_context.allocator)
+	fullpaths := make([dynamic]string, 0, context.temp_allocator)
 
 	symbol, resolve_flag, ok := prepare_references(document, ast_context, position_context)
 	if !ok {
@@ -814,7 +814,7 @@ resolve_references :: proc(
 		if live_path, open := live_candidate_paths[normalized_path]; open {
 			candidate_path = live_path
 		}
-		append(&fullpaths, strings.clone(candidate_path, ast_context.allocator))
+		append(&fullpaths, strings.clone(candidate_path, context.temp_allocator))
 	}
 
 	reset_ast_context(ast_context)
@@ -842,11 +842,12 @@ resolve_references :: proc(
 		if source, _, open := reference_open_document_source(fullpath); open {
 			data = transmute([]u8)source
 		} else {
-			data, err := os.read_entire_file(fullpath, context.allocator)
+			disk_data, err := os.read_entire_file(fullpath, context.allocator)
 			if err != nil {
 				log.errorf("failed to read entire file for indexing %v: %v", fullpath, err)
 				continue
 			}
+			data = disk_data
 		}
 		if common.has_ignore_file_tag(string(data)) || file_when_tags_exclude(string(data), fullpath) {
 			continue
@@ -904,15 +905,14 @@ resolve_references :: proc(
 		parse_imports(&document, &common.config)
 
 		in_pkg := false
-
 		for pkg in document.imports {
-			if pkg.name == symbol.pkg {
+			if strings.equal_fold(pkg.name, symbol.pkg) {
 				in_pkg = true
 				continue
 			}
 		}
 
-		if in_pkg || symbol.pkg == document.package_name {
+		if in_pkg || strings.equal_fold(symbol.pkg, document.package_name) {
 			symbols_and_nodes := resolve_entire_file_for_references(&document, context.allocator, resolve_flag, target_name)
 			for k, v in symbols_and_nodes {
 				if strings.equal_fold(v.symbol.uri, symbol.uri) && v.symbol.range == symbol.range {
