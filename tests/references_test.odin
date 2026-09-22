@@ -1,7 +1,10 @@
 package tests
 
+import "base:runtime"
+
 import "core:os"
 import "core:path/filepath"
+import "core:strings"
 import "core:testing"
 
 import "src:common"
@@ -146,6 +149,89 @@ reference_candidate_graph_reaches_importers_without_unrelated_reads :: proc(t: ^
 	testing.expect(t, found)
 	_, found = dep_candidates[unrelated_file]
 	testing.expect(t, !found)
+}
+
+@(test)
+reference_candidate_graph_invalidates_on_document_open_and_close :: proc(t: ^testing.T) {
+	previous_allocator := context.allocator
+	context.allocator = runtime.default_allocator()
+	defer context.allocator = previous_allocator
+	root, err := os.make_directory_temp("", "ols-reference-open-close-*", context.temp_allocator)
+	if !testing.expect(t, err == nil) do return
+	defer os.remove_all(root)
+
+	lib, _ := filepath.join({root, "lib"}, context.temp_allocator)
+	existing, _ := filepath.join({root, "existing"}, context.temp_allocator)
+	new_pkg, _ := filepath.join({root, "new"}, context.temp_allocator)
+	if !testing.expect(t, os.make_directory(lib) == nil) do return
+	if !testing.expect(t, os.make_directory(existing) == nil) do return
+	if !testing.expect(t, os.make_directory(new_pkg) == nil) do return
+
+	lib_file, _ := filepath.join({lib, "source.odin"}, context.temp_allocator)
+	existing_file, _ := filepath.join({existing, "main.odin"}, context.temp_allocator)
+	new_file, _ := filepath.join({new_pkg, "main.odin"}, context.temp_allocator)
+	if !testing.expect(t, os.write_entire_file(lib_file, "package lib\nTarget :: 1\n") == nil) do return
+	if !testing.expect(t, os.write_entire_file(existing_file, "package existing\nimport \"../lib\"\n") == nil) do return
+
+	old_folders := common.config.workspace_folders
+	old_collections := common.config.collections
+	old_documents := server.document_storage.documents
+	old_free_allocators := server.document_storage.free_allocators
+	common.config.workspace_folders = make([dynamic]common.WorkspaceFolder, context.temp_allocator)
+	append(&common.config.workspace_folders, common.WorkspaceFolder{uri = common.create_uri(root, context.temp_allocator).uri})
+	common.config.collections = make(map[string]string, context.temp_allocator)
+	server.document_storage.documents = make(map[string]server.Document)
+	server.document_storage.free_allocators = nil
+	defer {
+		server.reference_candidate_cache_reset()
+		server.document_storage_shutdown()
+		server.free_index()
+		server.document_storage.documents = old_documents
+		server.document_storage.free_allocators = old_free_allocators
+		common.config.workspace_folders = old_folders
+		common.config.collections = old_collections
+	}
+
+	server.reference_candidate_cache_reset()
+	server.setup_index(server.get_builtin_path())
+	initial := make(map[string]struct{}, context.temp_allocator)
+	server.collect_workspace_reference_candidates(lib, &initial)
+
+	new_source := strings.clone("package new\nimport \"../lib\"\n")
+	uri := common.create_uri(new_file, context.temp_allocator)
+	if !testing.expect(t, server.document_open(uri.uri, new_source, &common.config, nil) == .None) do return
+
+	opened := make(map[string]struct{}, context.temp_allocator)
+	server.collect_workspace_reference_candidates(lib, &opened)
+	_, found := opened[new_file]
+	testing.expect(t, found)
+	_, found = opened[existing_file]
+	testing.expect(t, found)
+
+	without_import := make([dynamic]server.TextDocumentContentChangeEvent, context.temp_allocator)
+	append(&without_import, server.TextDocumentContentChangeEvent{text = "package new\n"})
+	if !testing.expect(t, server.document_apply_changes(uri.uri, without_import, 1, &common.config, nil) == .None) do return
+	changed := make(map[string]struct{}, context.temp_allocator)
+	server.collect_workspace_reference_candidates(lib, &changed)
+	_, found = changed[new_file]
+	testing.expect(t, !found)
+
+	with_import := make([dynamic]server.TextDocumentContentChangeEvent, context.temp_allocator)
+	append(&with_import, server.TextDocumentContentChangeEvent{text = new_source})
+	if !testing.expect(t, server.document_apply_changes(uri.uri, with_import, 2, &common.config, nil) == .None) do return
+	changed = make(map[string]struct{}, context.temp_allocator)
+	server.collect_workspace_reference_candidates(lib, &changed)
+	_, found = changed[new_file]
+	testing.expect(t, found)
+
+	if !testing.expect(t, os.write_entire_file(new_file, "package new\n") == nil) do return
+	if !testing.expect(t, server.document_close(uri.uri) == .None) do return
+	closed := make(map[string]struct{}, context.temp_allocator)
+	server.collect_workspace_reference_candidates(lib, &closed)
+	_, found = closed[new_file]
+	testing.expect(t, !found)
+	_, found = closed[existing_file]
+	testing.expect(t, found)
 }
 
 @(test)
