@@ -163,13 +163,18 @@ reference_candidate_graph_invalidates_on_document_open_and_close :: proc(t: ^tes
 	lib, _ := filepath.join({root, "lib"}, context.temp_allocator)
 	existing, _ := filepath.join({root, "existing"}, context.temp_allocator)
 	new_pkg, _ := filepath.join({root, "new"}, context.temp_allocator)
+	node_modules, _ := filepath.join({root, "node_modules"}, context.temp_allocator)
+	hidden_pkg, _ := filepath.join({node_modules, "hidden"}, context.temp_allocator)
 	if !testing.expect(t, os.make_directory(lib) == nil) do return
 	if !testing.expect(t, os.make_directory(existing) == nil) do return
 	if !testing.expect(t, os.make_directory(new_pkg) == nil) do return
+	if !testing.expect(t, os.make_directory(node_modules) == nil) do return
+	if !testing.expect(t, os.make_directory(hidden_pkg) == nil) do return
 
 	lib_file, _ := filepath.join({lib, "source.odin"}, context.temp_allocator)
 	existing_file, _ := filepath.join({existing, "main.odin"}, context.temp_allocator)
 	new_file, _ := filepath.join({new_pkg, "main.odin"}, context.temp_allocator)
+	hidden_file, _ := filepath.join({hidden_pkg, "main.odin"}, context.temp_allocator)
 	if !testing.expect(t, os.write_entire_file(lib_file, "package lib\nTarget :: 1\n") == nil) do return
 	if !testing.expect(t, os.write_entire_file(existing_file, "package existing\nimport \"../lib\"\n") == nil) do return
 
@@ -207,6 +212,17 @@ reference_candidate_graph_invalidates_on_document_open_and_close :: proc(t: ^tes
 	testing.expect(t, found)
 	_, found = opened[existing_file]
 	testing.expect(t, found)
+
+	hidden_source := strings.clone("package hidden\nimport \"../../lib\"\n")
+	hidden_uri := common.create_uri(hidden_file, context.temp_allocator)
+	if !testing.expect(t, server.document_open(hidden_uri.uri, hidden_source, &common.config, nil) == .None) do return
+	blacklisted := make(map[string]struct{}, context.temp_allocator)
+	server.collect_workspace_reference_candidates(lib, &blacklisted)
+	_, found = blacklisted[hidden_file]
+	testing.expect(t, !found)
+	_, found = blacklisted[new_file]
+	testing.expect(t, found)
+	if !testing.expect(t, server.document_close(hidden_uri.uri) == .None) do return
 
 	without_import := make([dynamic]server.TextDocumentContentChangeEvent, context.temp_allocator)
 	append(&without_import, server.TextDocumentContentChangeEvent{text = "package new\n"})

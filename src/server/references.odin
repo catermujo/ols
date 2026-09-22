@@ -248,8 +248,21 @@ reference_open_document_source :: proc(fullpath: string) -> (string, bool) {
 	return "", false
 }
 
+reference_open_document_path_is_skipped :: proc(fullpath: string) -> bool {
+	if reference_path_is_excluded(fullpath) do return true
+
+	dir := filepath.dir(fullpath)
+	for {
+		if reference_should_skip_dir(dir) do return true
+		parent := filepath.dir(dir)
+		if parent == dir || dir == "" do break
+		dir = parent
+	}
+	return false
+}
+
 reference_workspace_path_is_in_scope :: proc(fullpath: string) -> bool {
-	if reference_path_is_excluded(fullpath) do return false
+	if reference_open_document_path_is_skipped(fullpath) do return false
 
 	forward_path, _ := filepath.replace_separators(fullpath, '/', context.temp_allocator)
 	for workspace in common.config.workspace_folders {
