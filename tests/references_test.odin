@@ -343,8 +343,11 @@ reference_open_document_alias_uses_live_reference_and_rename_results :: proc(t: 
 	disk_uri := common.create_uri(disk_file, context.temp_allocator)
 	document := server.document_get(source_uri.uri)
 	if !testing.expect(t, document != nil) do return
+	server.reference_resolution_test_reset()
 	fresh_locations, fresh_ok := server.get_references(document, {line = 1, character = 0})
 	if !testing.expect(t, fresh_ok) do return
+	first_parse_count := server.reference_resolution_test_parse_count_get()
+	testing.expect(t, first_parse_count > 0)
 	fresh_disk_locations := 0
 	for location in fresh_locations {
 		if strings.equal_fold(location.uri, disk_uri.uri) do fresh_disk_locations += 1
@@ -356,6 +359,8 @@ reference_open_document_alias_uses_live_reference_and_rename_results :: proc(t: 
 	fresh_disk_edits, fresh_disk_found := fresh_workspace.changes[disk_uri.uri]
 	testing.expect(t, fresh_disk_found)
 	testing.expect(t, len(fresh_disk_edits) == 1)
+	testing.expect(t, server.reference_resolution_test_parse_count_get() == first_parse_count)
+	testing.expect(t, server.reference_resolved_cache_test_entry_count() <= 32)
 	server.document_release(document)
 
 	live_path := strings.concatenate({root, "/node_modules/../lib/main.odin"}, context.temp_allocator)
