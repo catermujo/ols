@@ -24,6 +24,11 @@ ReferenceCandidateCacheEntry :: struct {
 	created: time.Time,
 }
 
+ReferenceResolvedCacheEntry :: struct {
+	locations: [dynamic]common.Location,
+	created:  time.Time,
+}
+
 ReferenceImportPackage :: struct {
 	paths:  [dynamic]string,
 	imports: map[string]struct{},
@@ -39,6 +44,25 @@ ReferenceImportGraph :: struct {
 reference_candidate_cache: map[string]ReferenceCandidateCacheEntry
 
 @(thread_local)
+reference_resolved_cache: map[string]ReferenceResolvedCacheEntry
+
+when ODIN_TEST {
+	reference_resolution_test_parse_count: int
+
+	reference_resolution_test_reset :: proc() {
+		reference_resolution_test_parse_count = 0
+	}
+
+	reference_resolution_test_parse_count_get :: proc() -> int {
+		return reference_resolution_test_parse_count
+	}
+
+	reference_resolved_cache_test_entry_count :: proc() -> int {
+		return len(reference_resolved_cache)
+	}
+}
+
+@(thread_local)
 reference_import_graph: ReferenceImportGraph
 
 reference_candidate_cache_reset :: proc() {
@@ -50,6 +74,8 @@ reference_candidate_cache_reset :: proc() {
 	}
 	delete(reference_candidate_cache)
 	reference_candidate_cache = nil
+
+	reference_resolved_cache_reset()
 
 	for pkg, entry in reference_import_graph.packages {
 		for fullpath in entry.paths do delete(fullpath, allocator)
@@ -64,6 +90,90 @@ reference_candidate_cache_reset :: proc() {
 	for fullpath in reference_import_graph.all_paths do delete(fullpath, allocator)
 	delete(reference_import_graph.all_paths)
 	reference_import_graph = {}
+}
+
+reference_resolved_cache_reset :: proc() {
+	allocator := runtime.default_allocator()
+	for key, entry in reference_resolved_cache {
+		for location in entry.locations do delete(location.uri, allocator)
+		delete(entry.locations)
+		delete(key, allocator)
+	}
+	delete(reference_resolved_cache)
+	reference_resolved_cache = nil
+}
+
+reference_resolved_cache_key :: proc(
+	symbol: Symbol,
+	resolve_flag: ResolveReferenceFlag,
+	target_name: string,
+	current_document_uri: string,
+	current_file_only: bool,
+	include_declaration: bool,
+) -> string {
+	return fmt.tprintf(
+		"%s\x00%s\x00%s\x00%s\x00%d:%d:%d:%d:%d:%v:%v",
+		symbol.uri,
+		symbol.pkg,
+		target_name,
+		current_document_uri,
+		symbol.range.start.line,
+		symbol.range.start.character,
+		symbol.range.end.line,
+		symbol.range.end.character,
+		int(resolve_flag),
+		current_file_only,
+		include_declaration,
+	)
+}
+
+reference_resolved_cache_copy :: proc(
+	locations: []common.Location,
+	allocator: runtime.Allocator,
+) -> [dynamic]common.Location {
+	copied := make([dynamic]common.Location, 0, len(locations), allocator)
+	for location in locations {
+		append(&copied, common.Location {
+			range = location.range,
+			uri   = strings.clone(location.uri, allocator),
+		})
+	}
+	return copied
+}
+
+reference_resolved_cache_store :: proc(key: string, locations: []common.Location) {
+	allocator := runtime.default_allocator()
+	if entry, ok := reference_resolved_cache[key]; ok {
+		for location in entry.locations do delete(location.uri, allocator)
+		delete(entry.locations)
+		reference_resolved_cache[key] = ReferenceResolvedCacheEntry {
+			locations = reference_resolved_cache_copy(locations, allocator),
+			created = time.now(),
+		}
+		return
+	}
+	if len(reference_resolved_cache) >= 32 {
+		reference_resolved_cache_reset()
+	}
+	if reference_resolved_cache == nil {
+		reference_resolved_cache = make(map[string]ReferenceResolvedCacheEntry, 32, allocator)
+	}
+	reference_resolved_cache[strings.clone(key, allocator)] = ReferenceResolvedCacheEntry {
+		locations = reference_resolved_cache_copy(locations, allocator),
+		created = time.now(),
+	}
+}
+
+reference_resolved_cache_load :: proc(
+	key: string,
+	allocator: runtime.Allocator,
+) -> ([]common.Location, bool) {
+	entry, ok := reference_resolved_cache[key]
+	if !ok || time.since(entry.created) >= 30 * time.Second {
+		return {}, false
+	}
+	locations := reference_resolved_cache_copy(entry.locations[:], allocator)
+	return locations[:], true
 }
 
 reference_path_is_excluded :: proc(fullpath: string) -> bool {
@@ -756,6 +866,19 @@ resolve_references :: proc(
 	}
 
 	target_name := get_target_name(position_context, resolve_flag)
+	current_document_uri := current_file_only ? document.uri.uri : ""
+	cache_key := reference_resolved_cache_key(
+		symbol,
+		resolve_flag,
+		target_name,
+		current_document_uri,
+		current_file_only,
+		include_declaration,
+	)
+	if cached, ok := reference_resolved_cache_load(cache_key, ast_context.allocator); ok {
+		return cached, true
+	}
+
 	symbols_and_nodes := resolve_entire_file_for_references(document, ast_context.allocator, resolve_flag, target_name)
 
 	for k, v in symbols_and_nodes {
@@ -783,6 +906,7 @@ resolve_references :: proc(
 	}
 
 	if .Local in symbol.flags || current_file_only {
+		reference_resolved_cache_store(cache_key, locations[:])
 		return locations[:], true
 	}
 
@@ -880,6 +1004,9 @@ resolve_references :: proc(
 			pkg      = pkg,
 		}
 
+		when ODIN_TEST {
+			reference_resolution_test_parse_count += 1
+		}
 		ok := parse_file(&p, &file)
 
 		if !ok || (!is_ols_builtin_file(fullpath) &&
@@ -939,6 +1066,7 @@ resolve_references :: proc(
 		}
 	}
 
+	reference_resolved_cache_store(cache_key, locations[:])
 	return locations[:], true
 }
 
