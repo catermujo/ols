@@ -103,7 +103,7 @@ run_check_consumer :: proc(c: Consumer) {
 		for request in chan.try_recv(c.ch) {
 			append(&paths, request.path)
 		}
-		check(request.check_mode, paths[:], request.config)
+		check(request.check_mode, paths[:], request.config, c.w)
 		push_diagnostics(c.w)
 		for path in paths {
 			delete(path, checker.allocator)
@@ -187,17 +187,29 @@ resolve_check_paths :: proc(mode: Check_Mode, paths: []string, config: ^common.C
 }
 
 CheckProcess :: struct {
+	path:     string,
 	process:  os.Process,
 	reader:   ^os.File,
 	finished: bool,
 	buffer:   [dynamic]u8,
 }
 
-check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config) {
+@(private = "file")
+check_progress_id: int
+
+check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config, writer: ^Writer) {
 	paths := resolve_check_paths(mode, check_paths, config)
 
 	if len(paths) == 0 {
 		return
+	}
+	progress_token := ""
+	completed_checks := 0
+	if mode == .Saved && config.work_done_progress && writer != nil {
+		check_progress_id += 1
+		progress_token = fmt.tprintf("OLS_RECHECK_SAVE_%d", check_progress_id)
+		progress_create(progress_token, writer)
+		progress_begin(progress_token, "Rechecking package", "Starting check", 0, writer)
 	}
 
 	clear_diagnostics(.Check)
@@ -219,19 +231,28 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config) {
 	next_index := 0
 	running_count := 0
 	start := time.now()
+	timed_out := false
 
 	for running_count > 0 || next_index < len(paths) {
 		for running_count < max_concurrent_checks && next_index < len(paths) {
-			p, ok := start_check_process(paths[next_index], collections[:], config)
+			check_path := paths[next_index]
+			p, ok := start_check_process(check_path, collections[:], config)
 			next_index += 1
 			if !ok {
+				completed_checks += 1
 				continue
 			}
+			p.path = check_path
 			append(&processes, p)
 			running_count += 1
+			if progress_token != "" {
+				progress_report(progress_token, fmt.tprintf("Checking %s", filepath.base(check_path)),
+					completed_checks * 100 / len(paths), writer)
+			}
 		}
 
 		if time.since(start) > 20 * time.Second {
+			timed_out = true
 			log.error("`odin check` timed out")
 			for &p in processes {
 				if !p.finished {
@@ -265,6 +286,12 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config) {
 
 			p.finished = true
 			running_count -= 1
+			completed_checks += 1
+			if progress_token != "" {
+				progress_report(progress_token,
+					fmt.tprintf("Checked %s (%d/%d)", filepath.base(p.path), completed_checks, len(paths)),
+					completed_checks * 100 / len(paths), writer)
+			}
 
 			for {
 				n, read_err := os.read(p.reader, buf[:])
@@ -364,6 +391,13 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config) {
 			)
 		}
 
+	}
+	if progress_token != "" {
+		message := "Recheck done"
+		if timed_out {
+			message = "Recheck timed out"
+		}
+		progress_end(progress_token, message, writer)
 	}
 
 }

@@ -18,14 +18,20 @@ make_writer :: proc(writer_fn: WriterFn, writer_context: rawptr) -> Writer {
 	return writer
 }
 
-write_sized :: proc(writer: ^Writer, data: []byte) -> bool {
+write_message :: proc(writer: ^Writer, header, body: []byte) -> bool {
 	sync.mutex_lock(&writer.writer_mutex)
 	defer sync.mutex_unlock(&writer.writer_mutex)
 
-	written, err := writer.writer_fn(writer.writer_context, data)
-
-	if (err != 0) {
-		return false
+	parts := [2][]byte{header, body}
+	for input in parts {
+		part := input
+		for len(part) > 0 {
+			written, err := writer.writer_fn(writer.writer_context, part)
+			if err != 0 || written <= 0 {
+				return false
+			}
+			part = part[written:]
+		}
 	}
 
 	return true

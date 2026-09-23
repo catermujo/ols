@@ -5013,7 +5013,9 @@ make_symbol_bit_field_from_ast :: proc(
 }
 
 get_globals :: proc(file: ast.File, ast_context: ^AstContext) {
-	exprs := collect_globals(file)
+	// An open file can be inspected even when its #+when tag excludes it from
+	// workspace indexing under the current profile.
+	exprs := collect_globals(file, include_conditional_file = true)
 
 	for expr in exprs {
 		ast_context.globals[expr.name] = expr

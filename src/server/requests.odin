@@ -103,21 +103,22 @@ thread_request_main :: proc(data: rawptr) {
 			#partial switch v in id_value {
 			case json.String:
 				id = v
-				//Hack to support dynamic registering without changing too much
-				if v == "REGISTER_DYNAMIC_CAPABILITIES" {
-					json.destroy_value(root)
-					continue
-				}
 			case json.Integer:
 				id = v
 			case:
 				id = 0
 			}
 		}
+		method_value, has_method := root["method"]
+		if !has_method {
+			json.destroy_value(root)
+			free_all(context.temp_allocator)
+			continue
+		}
 
 		sync.mutex_lock(&requests_mutex)
 
-		method := root["method"].(json.String)
+		method := method_value.(json.String)
 
 		spall.trace("request", fmt.tprint(method, id))
 
@@ -710,6 +711,7 @@ request_initialize :: proc(
 	}
 
 	config.client_name = strings.clone(initialize_params.clientInfo.name)
+	config.work_done_progress = initialize_params.capabilities.window.workDoneProgress
 	config.workspace_folders = make([dynamic]common.WorkspaceFolder)
 
 	for s in initialize_params.workspaceFolders {
@@ -868,6 +870,13 @@ request_initialize :: proc(
 		},
 		id = id,
 	)
+	// Let the client display progress while synchronous indexing continues.
+	send_response(response, writer)
+	progress_token :: "OLS_STARTUP_PROGRESS"
+	if config.work_done_progress {
+		progress_create(progress_token, writer)
+		progress_begin(progress_token, "Starting ols", "Resolving builtin packages", 0, writer)
+	}
 
 	/*
 		Add runtime package
@@ -882,15 +891,21 @@ request_initialize :: proc(
 	config.builtin_path = builtin_path
 	// we still need to ensure the index is setup even if the builtin folder was not found
 	setup_index(builtin_path)
+	if config.work_done_progress {
+		progress_report(progress_token, "Indexing builtin packages", 20, writer)
+	}
 
 	for pkg in indexer.builtin_packages {
 		try_build_package(pkg)
 	}
 
+	if config.work_done_progress {
+		progress_report(progress_token, "Scanning workspace packages", 70, writer)
+	}
 	find_all_package_aliases(config)
-
-	// Finish synchronous setup before announcing that the server is ready.
-	send_response(response, writer)
+	if config.work_done_progress {
+		progress_end(progress_token, "Ready", writer)
+	}
 
 	if initialize_params.capabilities.workspace.didChangeWatchedFiles.dynamicRegistration {
 		register_dynamic_capabilities(writer)

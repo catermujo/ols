@@ -12,15 +12,7 @@ send_notification :: proc(notification: Notification, writer: ^Writer) -> bool {
 		return false
 	}
 
-	if !write_sized(writer, transmute([]u8)header) {
-		return false
-	}
-
-	if !write_sized(writer, data) {
-		return false
-	}
-
-	return true
+	return write_message(writer, transmute([]u8)header, data)
 }
 
 send_request :: proc(request: RequestMessage, writer: ^Writer) -> bool {
@@ -32,15 +24,7 @@ send_request :: proc(request: RequestMessage, writer: ^Writer) -> bool {
 		return false
 	}
 
-	if !write_sized(writer, transmute([]u8)header) {
-		return false
-	}
-
-	if !write_sized(writer, data) {
-		return false
-	}
-
-	return true
+	return write_message(writer, transmute([]u8)header, data)
 }
 
 send_response :: proc(response: ResponseMessage, writer: ^Writer) -> bool {
@@ -52,15 +36,7 @@ send_response :: proc(response: ResponseMessage, writer: ^Writer) -> bool {
 		return false
 	}
 
-	if !write_sized(writer, transmute([]u8)header) {
-		return false
-	}
-
-	if !write_sized(writer, data) {
-		return false
-	}
-
-	return true
+	return write_message(writer, transmute([]u8)header, data)
 }
 
 send_error :: proc(response: ResponseMessageError, writer: ^Writer) -> bool {
@@ -72,13 +48,5 @@ send_error :: proc(response: ResponseMessageError, writer: ^Writer) -> bool {
 		return false
 	}
 
-	if !write_sized(writer, transmute([]u8)header) {
-		return false
-	}
-
-	if !write_sized(writer, data) {
-		return false
-	}
-
-	return true
+	return write_message(writer, transmute([]u8)header, data)
 }
