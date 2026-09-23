@@ -555,7 +555,7 @@ read_ols_initialize_options :: proc(config: ^common.Config, ols_config: OlsConfi
 	for it in ols_config.collections {
 		forward_path, _ := filepath.replace_separators(it.path, '/', context.temp_allocator)
 
-		forward_path = common.resolve_home_dir(forward_path, context.temp_allocator)
+		forward_path, _ = common.resolve_home_dir(forward_path, context.temp_allocator)
 
 		final_path := ""
 
@@ -912,7 +912,7 @@ get_builtin_path :: proc(allocator := context.allocator) -> string {
 	}
 	env_var_name :: "OLS_BUILTIN_FOLDER"
 	if env := os.get_env(env_var_name, context.temp_allocator); env != "" {
-		env = common.resolve_home_dir(env, context.temp_allocator)
+		env, _ = common.resolve_home_dir(env, context.temp_allocator)
 		append(&search_paths, env)
 	}
 	for path in search_paths {

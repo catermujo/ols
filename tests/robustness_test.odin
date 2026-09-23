@@ -9,6 +9,28 @@ import "src:common"
 import "src:server"
 
 @(test)
+relative_collection_path_does_not_crash_initialize :: proc(t: ^testing.T) {
+	root, err := os.make_directory_temp("", "ols-relative-collection-*", context.temp_allocator)
+	if !testing.expect(t, err == nil) do return
+	defer os.remove_all(root)
+	want, _ := filepath.join({root, "rt"}, context.temp_allocator)
+	if !testing.expect(t, os.make_directory(want) == nil) do return
+
+	config := common.Config {
+		collections = make(map[string]string),
+	}
+	defer delete(config.collections)
+	options := server.OlsConfig {odin_root_override = root}
+	append(&options.collections, server.OlsConfigCollection{name = "rt", path = "./rt"})
+	uri := common.create_uri(root, context.temp_allocator)
+
+	server.read_ols_initialize_options(&config, options, uri)
+	abs_want, abs_err := filepath.abs(want, context.temp_allocator)
+	if !testing.expect(t, abs_err == nil) do return
+	testing.expect_value(t, config.collections["rt"], abs_want)
+}
+
+@(test)
 change_missing_document_returns_invalid_request :: proc(t: ^testing.T) {
 	uri := common.create_uri("/tmp/ols-missing-document.odin", context.temp_allocator)
 	changes := make([dynamic]server.TextDocumentContentChangeEvent, context.temp_allocator)
