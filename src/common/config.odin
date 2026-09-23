@@ -21,6 +21,7 @@ Config :: struct {
 	completion_insert_replace_support:       bool,
 	hover_support_md:                        bool,
 	signature_offset_support:                bool,
+	work_done_progress:                      bool,
 	collections:                             map[string]string,
 	running:                                 bool,
 	verbose:                                 bool,

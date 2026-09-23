@@ -9,6 +9,35 @@ import "src:common"
 import test "src:testing"
 
 @(test)
+definition_in_open_conditional_file :: proc(t: ^testing.T) {
+	source := test.Source {
+		main = `#+when EDITOR
+package test
+UI :: struct {
+    tweak_section: int,
+}
+main :: proc() {
+    switch g.debug.ui.twea{*}k_section {
+    case 0:
+    }
+}
+`,
+		files = {
+			{"state.odin", `package test
+Debug :: struct {ui: UI}
+State :: struct {debug: Debug}
+g: ^State
+`},
+		},
+	}
+
+	location := common.Location {
+		range = {start = {line = 3, character = 4}, end = {line = 3, character = 17}},
+	}
+	test.expect_definition_locations(t, &source, {location})
+}
+
+@(test)
 ast_goto_bit_set_comp_literal :: proc(t: ^testing.T) {
 	source := test.Source {
 		main = `package test

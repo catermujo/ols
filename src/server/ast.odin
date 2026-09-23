@@ -587,7 +587,7 @@ collect_when_body :: proc(
 	}
 }
 
-collect_globals :: proc(file: ast.File) -> []GlobalExpr {
+collect_globals :: proc(file: ast.File, include_conditional_file := false) -> []GlobalExpr {
 
 	spall.trace(#procedure, file.fullpath)
 
@@ -598,7 +598,8 @@ collect_globals :: proc(file: ast.File) -> []GlobalExpr {
 		register_when_consts_from_file(&tag_expr_map, file)
 		register_when_consts_from_package(&tag_expr_map, file)
 	}
-	if !should_collect_file(file_tags, file, tag_expr_map) do return {}
+	if file_tags.ignore do return {}
+	if !include_conditional_file && !should_collect_file(file_tags, file, tag_expr_map) do return {}
 
 	exprs := make([dynamic]GlobalExpr, context.temp_allocator)
 	defer shrink(&exprs)

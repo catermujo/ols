@@ -243,7 +243,7 @@ run_check_consumer :: proc(c: Consumer) {
 		}
 		sync.mutex_unlock(&checker.mutex)
 
-		semantics := check(batch.mode, batch.paths[:], batch.buffers, &common.config)
+		semantics := check(batch.mode, batch.paths[:], batch.buffers, &common.config, c.w)
 
 		// NOTE(bill): This is loaded first as it adds the hints for the untaken branches of `when` statements
 		if common.config.enable_compiler_semantics {
@@ -346,13 +346,17 @@ resolve_check_paths :: proc(mode: Check_Mode, paths: []string, config: ^common.C
 }
 
 CheckProcess :: struct {
+	path:     string,
 	process:  os.Process,
 	reader:   ^os.File,
 	finished: bool,
 	buffer:   [dynamic]u8,
 }
 
-check :: proc(mode: Check_Mode, check_paths: []string, buffers: []Check_Buffer, config: ^common.Config) -> (semantics: []string) {
+@(private = "file")
+check_progress_id: int
+
+check :: proc(mode: Check_Mode, check_paths: []string, buffers: []Check_Buffer, config: ^common.Config, writer: ^Writer) -> (semantics: []string) {
 	write_overlay :: proc(o: ^Check_Overlay, buffers: []Check_Buffer) -> string {
 		dir := checker_dir()
 		if len(buffers) == 0 || dir == "" {
@@ -403,11 +407,18 @@ check :: proc(mode: Check_Mode, check_paths: []string, buffers: []Check_Buffer, 
 		}
 		return path
 	}
-
 	paths := resolve_check_paths(mode, check_paths, config)
 
 	if len(paths) == 0 {
 		return
+	}
+	progress_token := ""
+	completed_checks := 0
+	if mode == .Saved && config.work_done_progress && writer != nil {
+		check_progress_id += 1
+		progress_token = fmt.tprintf("OLS_RECHECK_SAVE_%d", check_progress_id)
+		progress_create(progress_token, writer)
+		progress_begin(progress_token, "Rechecking package", "Starting check", 0, writer)
 	}
 
 	clear_diagnostics(.Check)
@@ -469,6 +480,7 @@ check :: proc(mode: Check_Mode, check_paths: []string, buffers: []Check_Buffer, 
 	next_index := 0
 	running_count := 0
 	start := time.now()
+	timed_out := false
 
 	for running_count > 0 || next_index < len(jobs) {
 		for running_count < max_concurrent_checks && next_index < len(jobs) {
@@ -477,19 +489,27 @@ check :: proc(mode: Check_Mode, check_paths: []string, buffers: []Check_Buffer, 
 				semantics_file = fmt.tprintf("%s/semantics-%d.cbor", checker_dir(), next_index)
 				_ = os.remove(semantics_file)
 			}
+			check_path := jobs[next_index][0]
 			p, ok := start_check_process(command, jobs[next_index], collections[:], overlay, semantics_file, config)
 			next_index += 1
 			if !ok {
+				completed_checks += 1
 				continue
 			}
 			if semantics_file != "" {
 				append(&exported, semantics_file)
 			}
+			p.path = check_path
 			append(&processes, p)
 			running_count += 1
+			if progress_token != "" {
+				progress_report(progress_token, fmt.tprintf("Checking %s", filepath.base(check_path)),
+					completed_checks * 100 / len(jobs), writer)
+			}
 		}
 
 		if time.since(start) > 20 * time.Second {
+			timed_out = true
 			log.error("`odin check` timed out")
 			for &p in processes {
 				if !p.finished {
@@ -523,6 +543,12 @@ check :: proc(mode: Check_Mode, check_paths: []string, buffers: []Check_Buffer, 
 
 			p.finished = true
 			running_count -= 1
+			completed_checks += 1
+			if progress_token != "" {
+				progress_report(progress_token,
+					fmt.tprintf("Checked %s (%d/%d)", filepath.base(p.path), completed_checks, len(jobs)),
+					completed_checks * 100 / len(jobs), writer)
+			}
 
 			for {
 				n, read_err := os.read(p.reader, buf[:])
@@ -575,7 +601,10 @@ check :: proc(mode: Check_Mode, check_paths: []string, buffers: []Check_Buffer, 
 		log.infof("`%s` has no `-workspace` or `-overlay`, so packages are checked one at a time from disk", command)
 		delete(checker.odin_without_workspace, checker.allocator)
 		checker.odin_without_workspace = strings.clone(command, checker.allocator)
-		return check(mode, check_paths, buffers, config)
+		if progress_token != "" {
+			progress_end(progress_token, "Retrying packages from disk", writer)
+		}
+		return check(mode, check_paths, buffers, config, writer)
 	}
 
 	DiagnosticKey :: struct {
@@ -644,6 +673,13 @@ check :: proc(mode: Check_Mode, check_paths: []string, buffers: []Check_Buffer, 
 			)
 		}
 
+	}
+	if progress_token != "" {
+		message := "Recheck done"
+		if timed_out {
+			message = "Recheck timed out"
+		}
+		progress_end(progress_token, message, writer)
 	}
 
 	return exported[:]
