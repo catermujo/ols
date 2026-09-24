@@ -72,7 +72,8 @@ stop_check_worker :: proc() {
 
 create_and_start_check_worker :: proc(writer: ^Writer) {
 	allocator := runtime.heap_allocator()
-	check_chan, _ := chan.create(chan.Chan(Check_Request), 8, context.allocator)
+	check_chan: chan.Chan(Check_Request, .Both)
+	check_chan, _ = chan.create(chan.Chan(Check_Request, .Both), 8, context.allocator)
 	check_send := chan.as_send(check_chan)
 	checker = Checker {
 		allocator = runtime.heap_allocator(),

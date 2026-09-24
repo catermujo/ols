@@ -2,6 +2,7 @@
 package server
 
 import "core:fmt"
+import "core:mem/virtual"
 import "core:odin/ast"
 import "core:odin/parser"
 import "core:odin/tokenizer"
@@ -152,6 +153,9 @@ register_when_consts_from_package :: proc(when_expr_map: ^map[string]When_Expr, 
 	defer context.allocator = allocator
 	paths, err := filepath.glob(fmt.tprintf("%s/*.odin", filepath.dir(file.fullpath)), context.temp_allocator)
 	if err != nil do return
+	parse_arena: virtual.Arena
+	_ = virtual.arena_init_growing(&parse_arena)
+	defer virtual.arena_destroy(&parse_arena)
 	for _ in 0 ..< 8 {
 		before := len(when_expr_map)
 		for path in paths {
@@ -163,8 +167,15 @@ register_when_consts_from_package :: proc(when_expr_map: ^map[string]When_Expr, 
 				continue
 			}
 			sibling := ast.File {fullpath = path, src = string(data)}
-			p := parser.Parser {flags = {.Optional_Semicolons}}
-			if parser.parse_file(&p, &sibling) && sibling.syntax_error_count == 0 {
+			virtual.arena_free_all(&parse_arena)
+			parsed := false
+			{
+				context.allocator = virtual.arena_allocator(&parse_arena)
+				context.temp_allocator = context.allocator
+				p := parser.Parser {flags = {.Optional_Semicolons}}
+				parsed = parser.parse_file(&p, &sibling)
+			}
+			if parsed && sibling.syntax_error_count == 0 {
 				register_when_consts_from_file(when_expr_map, sibling)
 			}
 			delete(data, context.temp_allocator)
@@ -215,6 +226,11 @@ has_file_when_tag :: proc(file: ast.File) -> bool {
 // Resolve header tags before parsing the body. An unresolved name may be a
 // constant declared in this file, so leave that file for the normal pass.
 file_when_tags_exclude :: proc(source, fullpath: string) -> bool {
+	scratch: virtual.Arena
+	_ = virtual.arena_init_growing(&scratch)
+	defer virtual.arena_destroy(&scratch)
+	context.temp_allocator = virtual.arena_allocator(&scratch)
+
 	tok: tokenizer.Tokenizer
 	tokenizer.init(&tok, source, fullpath, nil)
 	tags := make([dynamic]string, context.temp_allocator)
