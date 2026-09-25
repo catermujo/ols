@@ -300,7 +300,7 @@ check_unused_imports :: proc(document: ^Document, config: ^common.Config, semant
 		if semantics_only {
 			return
 		}
-		unused_imports = find_unused_imports(document, context.temp_allocator)
+		unused_imports = find_unused_imports_syntactic(document, context.temp_allocator)
 	}
 
 	remove_diagnostics(.Unused, uri.uri)
