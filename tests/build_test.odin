@@ -13,6 +13,76 @@ import "src:common"
 import "src:server"
 
 @(test)
+document_open_defers_unrelated_import_indexing :: proc(t: ^testing.T) {
+	previous_allocator := context.allocator
+	context.allocator = runtime.default_allocator()
+	defer context.allocator = previous_allocator
+
+	root, err := os.make_directory_temp("", "ols-lazy-imports-*", context.temp_allocator)
+	if !testing.expect(t, err == nil) do return
+	defer os.remove_all(root)
+	root, err = os.get_absolute_path(root, context.temp_allocator)
+	if !testing.expect(t, err == nil) do return
+
+	app, _ := filepath.join({root, "app"}, context.temp_allocator)
+	target, _ := filepath.join({root, "target"}, context.temp_allocator)
+	unrelated, _ := filepath.join({root, "unrelated"}, context.temp_allocator)
+	if !testing.expect(t, os.make_directory(app) == nil) ||
+	   !testing.expect(t, os.make_directory(target) == nil) ||
+	   !testing.expect(t, os.make_directory(unrelated) == nil) {
+		return
+	}
+	main_path, _ := filepath.join({app, "main.odin"}, context.temp_allocator)
+	target_path, _ := filepath.join({target, "main.odin"}, context.temp_allocator)
+	unrelated_path, _ := filepath.join({unrelated, "main.odin"}, context.temp_allocator)
+	main_text := `package app
+import "../target"
+import "../unrelated"
+main :: proc() {
+    _ = target.Value
+}
+`
+	if !testing.expect(t, os.write_entire_file(main_path, transmute([]u8)main_text) == nil) ||
+	   !testing.expect(t, os.write_entire_file(target_path, "package target\nValue :: 42\n") == nil) ||
+	   !testing.expect(t, os.write_entire_file(unrelated_path, "package unrelated\nOther :: 7\n") == nil) {
+		return
+	}
+
+	old_documents := server.document_storage.documents
+	old_free_allocators := server.document_storage.free_allocators
+	server.document_storage.documents = make(map[string]server.Document)
+	server.document_storage.free_allocators = nil
+	defer {
+		server.document_storage_shutdown()
+		server.document_storage.documents = old_documents
+		server.document_storage.free_allocators = old_free_allocators
+	}
+	server.setup_index(server.get_builtin_path())
+	defer server.free_index()
+
+	uri := common.create_uri(main_path, context.temp_allocator)
+	if !testing.expect(t, server.document_open(uri.uri, strings.clone(main_text), &common.config, nil) == .None) do return
+	_, found := server.lookup("Value", target, main_path)
+	testing.expect(t, !found)
+	_, found = server.lookup("Other", unrelated, main_path)
+	testing.expect(t, !found)
+
+	document := server.document_get(uri.uri)
+	if !testing.expect(t, document != nil) do return
+	defer server.document_release(document)
+	unused := server.find_unused_imports_syntactic(document)
+	if !testing.expect(t, len(unused) == 1) do return
+	testing.expect(t, unused[0].name == unrelated)
+	locations, ok := server.get_definition_location(document, {line = 4, character = 16}, &common.config)
+	if !testing.expect(t, ok && len(locations) == 1) do return
+	testing.expect(t, locations[0].uri == common.create_uri(target_path, context.temp_allocator).uri)
+	_, found = server.lookup("Value", target, main_path)
+	testing.expect(t, found)
+	_, found = server.lookup("Other", unrelated, main_path)
+	testing.expect(t, !found)
+}
+
+@(test)
 document_index_tracks_open_change_and_close :: proc(t: ^testing.T) {
 	previous_allocator := context.allocator
 	context.allocator = runtime.default_allocator()

@@ -147,7 +147,58 @@ register_when_consts_from_file :: proc(when_expr_map: ^map[string]When_Expr, fil
 	}
 }
 
-register_when_consts_from_package :: proc(when_expr_map: ^map[string]When_Expr, file: ast.File) {
+append_when_tag_identifiers :: proc(names: ^[dynamic]string, tag: string) {
+	text := strings.trim_space(tag)
+	if !strings.has_prefix(text, "#+when") do return
+	if len(text) > len("#+when") && !strings.is_space(rune(text[len("#+when")])) do return
+
+	tok: tokenizer.Tokenizer
+	tokenizer.init(&tok, strings.trim_space(text[len("#+when"):]), "<when tag>", nil)
+	for {
+		ident := tokenizer.scan(&tok)
+		if ident.kind == .EOF do break
+		if ident.kind != .Ident || ident.text == "true" || ident.text == "false" do continue
+		found := false
+		for name in names^ {
+			if name == ident.text {
+				found = true
+				break
+			}
+		}
+		if !found do append(names, ident.text)
+	}
+}
+
+when_tag_identifiers_resolved :: proc(when_expr_map: map[string]When_Expr, names: []string) -> bool {
+	if len(names) == 0 do return false
+	for name in names {
+		if name != "ODIN_OS" && name != "ODIN_ARCH" && name not_in when_expr_map do return false
+	}
+	return true
+}
+
+source_may_declare_ident :: proc(source: string, names: []string) -> bool {
+	for name in names {
+		if name == "" do continue
+		remaining := source
+		for {
+			index := strings.index(remaining, name)
+			if index < 0 do break
+			end := index + len(name)
+			for end < len(remaining) && strings.is_space(rune(remaining[end])) do end += 1
+			if end < len(remaining) && remaining[end] == ':' do return true
+			remaining = remaining[index + len(name):]
+		}
+	}
+	return false
+}
+
+register_when_consts_from_package :: proc(
+	when_expr_map: ^map[string]When_Expr,
+	file: ast.File,
+	needed: []string = nil,
+) {
+	if when_tag_identifiers_resolved(when_expr_map^, needed) do return
 	allocator := context.allocator
 	context.allocator = context.temp_allocator
 	defer context.allocator = allocator
@@ -156,29 +207,40 @@ register_when_consts_from_package :: proc(when_expr_map: ^map[string]When_Expr, 
 	parse_arena: virtual.Arena
 	_ = virtual.arena_init_growing(&parse_arena)
 	defer virtual.arena_destroy(&parse_arena)
-	for _ in 0 ..< 8 {
+	for pass in 0 ..< 8 {
 		before := len(when_expr_map)
-		for path in paths {
-			if path == file.fullpath do continue
-			data, read_err := os.read_entire_file(path, context.temp_allocator)
-			if read_err != nil do continue
-			if common.has_ignore_file_tag(string(data)) {
+		// Resolve direct declarations first. A #+when file should not parse
+		// every sibling when one small config file provides its condition.
+		for priority in 0 ..< 2 {
+			if priority == 0 && (pass > 0 || len(needed) == 0) do continue
+			for path in paths {
+				if path == file.fullpath do continue
+				data, read_err := os.read_entire_file(path, context.temp_allocator)
+				if read_err != nil do continue
+				if pass == 0 &&
+				   source_may_declare_ident(string(data), needed) != (priority == 0) {
+					delete(data, context.temp_allocator)
+					continue
+				}
+				if common.has_ignore_file_tag(string(data)) {
+					delete(data, context.temp_allocator)
+					continue
+				}
+				sibling := ast.File {fullpath = path, src = string(data)}
+				virtual.arena_free_all(&parse_arena)
+				parsed := false
+				{
+					context.allocator = virtual.arena_allocator(&parse_arena)
+					context.temp_allocator = context.allocator
+					p := parser.Parser {flags = {.Optional_Semicolons}}
+					parsed = parser.parse_file(&p, &sibling)
+				}
+				if parsed && sibling.syntax_error_count == 0 {
+					register_when_consts_from_file(when_expr_map, sibling)
+				}
 				delete(data, context.temp_allocator)
-				continue
+				if when_tag_identifiers_resolved(when_expr_map^, needed) do return
 			}
-			sibling := ast.File {fullpath = path, src = string(data)}
-			virtual.arena_free_all(&parse_arena)
-			parsed := false
-			{
-				context.allocator = virtual.arena_allocator(&parse_arena)
-				context.temp_allocator = context.allocator
-				p := parser.Parser {flags = {.Optional_Semicolons}}
-				parsed = parser.parse_file(&p, &sibling)
-			}
-			if parsed && sibling.syntax_error_count == 0 {
-				register_when_consts_from_file(when_expr_map, sibling)
-			}
-			delete(data, context.temp_allocator)
 		}
 		if len(when_expr_map) == before do break
 	}
@@ -250,7 +312,9 @@ file_when_tags_exclude :: proc(source, fullpath: string) -> bool {
 	if len(tags) == 0 do return false
 
 	when_expr_map := make_when_expr_map()
-	register_when_consts_from_package(&when_expr_map, ast.File {fullpath = fullpath})
+	needed := make([dynamic]string, context.temp_allocator)
+	for tag in tags do append_when_tag_identifiers(&needed, tag)
+	register_when_consts_from_package(&when_expr_map, ast.File {fullpath = fullpath}, needed[:])
 	for tag in tags {
 		expr_text := strings.trim_space(tag[len("#+when"):])
 		ident_tok: tokenizer.Tokenizer

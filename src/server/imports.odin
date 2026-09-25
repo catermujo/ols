@@ -118,3 +118,34 @@ find_unused_imports :: proc(document: ^Document, allocator := context.temp_alloc
 
 	return unused[:]
 }
+
+find_unused_imports_syntactic :: proc(document: ^Document, allocator := context.temp_allocator) -> []Package {
+	if document.ast.syntax_error_count > 0 do return nil
+
+	// Diagnostics only need a conservative answer. Package names are used as
+	// selector bases, so this avoids resolving every import on document open.
+	used := make(map[string]bool, context.temp_allocator)
+	for imp in document.imports do used[imp.base] = false
+
+	visit :: proc(visitor: ^ast.Visitor, node: ^ast.Node) -> ^ast.Visitor {
+		if node == nil do return nil
+		if selector, ok := node.derived.(^ast.Selector_Expr); ok {
+			if base, ok := selector.expr.derived.(^ast.Ident); ok {
+				used := cast(^map[string]bool)visitor.data
+				if base.name in used^ do used^[base.name] = true
+			}
+		}
+		return visitor
+	}
+	visitor := ast.Visitor {visit = visit, data = &used}
+	for decl in document.ast.decls do ast.walk(&visitor, decl)
+
+	unused := make([dynamic]Package, allocator)
+	for imp in document.imports {
+		if imp.base != "_" && !used[imp.base] {
+			append(&unused, imp)
+		}
+	}
+
+	return unused[:]
+}

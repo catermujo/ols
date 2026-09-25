@@ -596,7 +596,9 @@ collect_globals :: proc(file: ast.File, include_conditional_file := false) -> []
 	if has_file_when_tag(file) {
 		tag_expr_map = make_when_expr_map()
 		register_when_consts_from_file(&tag_expr_map, file)
-		register_when_consts_from_package(&tag_expr_map, file)
+		needed := make([dynamic]string, context.temp_allocator)
+		for tag in file.tags do append_when_tag_identifiers(&needed, tag.text)
+		register_when_consts_from_package(&tag_expr_map, file, needed[:])
 	}
 	if file_tags.ignore do return {}
 	if !include_conditional_file && !should_collect_file(file_tags, file, tag_expr_map) do return {}

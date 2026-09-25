@@ -72,8 +72,8 @@ stop_check_worker :: proc() {
 
 create_and_start_check_worker :: proc(writer: ^Writer) {
 	allocator := runtime.heap_allocator()
-	check_chan: chan.Chan(Check_Request, .Both)
-	check_chan, _ = chan.create(chan.Chan(Check_Request, .Both), 8, context.allocator)
+	check_chan: chan.Chan(Check_Request, chan.Direction.Both)
+	check_chan, _ = chan.create(chan.Chan(Check_Request, chan.Direction.Both), 8, context.allocator)
 	check_send := chan.as_send(check_chan)
 	checker = Checker {
 		allocator = runtime.heap_allocator(),
@@ -134,7 +134,7 @@ check_unused_imports :: proc(document: ^Document, config: ^common.Config) {
 
 	spall.trace(#procedure, document.fullpath)
 
-	unused_imports := find_unused_imports(document, context.temp_allocator)
+	unused_imports := find_unused_imports_syntactic(document, context.temp_allocator)
 
 	path := document.uri.path
 
