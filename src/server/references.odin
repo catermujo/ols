@@ -7,6 +7,7 @@ import "core:log"
 import "core:mem"
 import "core:odin/ast"
 import "core:odin/parser"
+import "core:odin/tokenizer"
 import "core:os"
 import "core:path/filepath"
 import path "core:path/slashpath"
@@ -403,46 +404,43 @@ reference_workspace_path_is_in_scope :: proc(fullpath: string) -> bool {
 
 reference_import_graph_process_file :: proc(
 	logical_path, src: string,
-	scan_arena: ^runtime.Arena,
 	allocator: runtime.Allocator,
 ) {
 	reference_import_graph_add_path(&reference_import_graph.all_paths, logical_path)
 	if common.has_ignore_file_tag(src) || file_when_tags_exclude(src, logical_path) do return
-
-	context.allocator = runtime.arena_allocator(scan_arena)
-	p := parser.Parser {flags = {.Optional_Semicolons}}
-	if !is_ols_builtin_file(logical_path) {
-		p.err = log_error_handler
-		p.warn = log_warning_handler
-	}
-
-	pkg := new(ast.Package)
-	pkg.kind = .Normal
-	pkg.fullpath = logical_path
-	pkg.name = filepath.base(filepath.dir(logical_path))
-	file := ast.File {fullpath = logical_path, src = src, pkg = pkg}
-
-	ok := parse_file(&p, &file, runtime.arena_allocator(scan_arena))
-	context.allocator = allocator
-	if !ok || file.syntax_error_count > 0 || file.pkg_decl == nil {
-		reference_import_graph.complete = false
-		return
-	}
 
 	file_dir, _ := filepath.replace_separators(filepath.dir(logical_path), '/', context.temp_allocator)
 	pkg_name, _ := filepath.replace_separators(file_dir, '/', context.temp_allocator)
 	package_info := reference_import_graph_package(pkg_name)
 	reference_import_graph_add_path(&package_info.paths, logical_path)
 
-	for imp in file.imports {
-		imported_pkg, import_ok := reference_import_graph_import_path(file_dir, imp.fullpath)
-		if !import_ok {
+	tok: tokenizer.Tokenizer
+	tokenizer.init(&tok, src, logical_path, nil)
+	previous_kind: tokenizer.Token_Kind
+	for {
+		token := tokenizer.scan(&tok)
+		if token.kind == .EOF do break
+		is_foreign_import := token.kind == .Import && previous_kind == .Foreign
+		previous_kind = token.kind
+		if is_foreign_import do continue
+		if token.kind != .Import do continue
+
+		path_token := tokenizer.scan(&tok)
+		if path_token.kind == .Ident do path_token = tokenizer.scan(&tok)
+		if path_token.kind != .String {
 			reference_import_graph.complete = false
+			continue
+		}
+		imported_pkg, import_ok := reference_import_graph_import_path(file_dir, path_token.text)
+		if !import_ok {
 			continue
 		}
 		if imported_pkg not_in package_info.imports {
 			package_info.imports[strings.clone(imported_pkg, allocator)] = {}
 		}
+	}
+	if tok.error_count > 0 {
+		reference_import_graph.complete = false
 	}
 }
 
@@ -492,7 +490,7 @@ reference_import_graph_build :: proc() {
 				}
 				src = string(data)
 			}
-			reference_import_graph_process_file(logical_path, src, &scan_arena, allocator)
+			reference_import_graph_process_file(logical_path, src, allocator)
 			context.allocator = allocator
 			runtime.arena_free_all(&scan_arena)
 		}
@@ -508,7 +506,6 @@ reference_import_graph_build :: proc() {
 		reference_import_graph_process_file(
 			document.fullpath,
 			string(document.text[:document.used_text]),
-			&scan_arena,
 			allocator,
 		)
 		context.allocator = allocator

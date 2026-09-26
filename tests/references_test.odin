@@ -149,6 +149,8 @@ reference_candidate_graph_reaches_importers_without_unrelated_reads :: proc(t: ^
 	transitive_file, _ := filepath.join({transitive, "main.odin"}, context.temp_allocator)
 	app_file, _ := filepath.join({app, "main.odin"}, context.temp_allocator)
 	unrelated_file, _ := filepath.join({unrelated, "main.odin"}, context.temp_allocator)
+	unknown_import_file, _ := filepath.join({unrelated, "unknown_import.odin"}, context.temp_allocator)
+	foreign_import_file, _ := filepath.join({unrelated, "foreign_import.odin"}, context.temp_allocator)
 	dep_file, _ := filepath.join({dep, "source.odin"}, context.temp_allocator)
 
 	testing.expect(t, os.write_entire_file(lib_file, "package lib\nTarget :: 1\n") == nil)
@@ -157,6 +159,8 @@ reference_candidate_graph_reaches_importers_without_unrelated_reads :: proc(t: ^
 	testing.expect(t, os.write_entire_file(transitive_file, "package transitive\nimport \"../direct\"\n") == nil)
 	testing.expect(t, os.write_entire_file(app_file, "package app\nimport \"col:dep\"\n") == nil)
 	testing.expect(t, os.write_entire_file(unrelated_file, "package unrelated\nTarget :: 1\n") == nil)
+	testing.expect(t, os.write_entire_file(unknown_import_file, "package unrelated\nimport \"missing:dep\"\n") == nil)
+	testing.expect(t, os.write_entire_file(foreign_import_file, "package unrelated\nforeign import native {\"libnative.a\"}\n") == nil)
 	testing.expect(t, os.write_entire_file(dep_file, "package dep\nTarget :: 1\n") == nil)
 
 	old_folders := common.config.workspace_folders
@@ -185,6 +189,10 @@ reference_candidate_graph_reaches_importers_without_unrelated_reads :: proc(t: ^
 	_, found = lib_candidates[app_file]
 	testing.expect(t, !found)
 	_, found = lib_candidates[unrelated_file]
+	testing.expect(t, !found)
+	_, found = lib_candidates[unknown_import_file]
+	testing.expect(t, !found)
+	_, found = lib_candidates[foreign_import_file]
 	testing.expect(t, !found)
 
 	if !testing.expect(t, os.write_entire_file(unrelated_file, "package unrelated\n\"\n") == nil) do return
