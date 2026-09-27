@@ -54,10 +54,26 @@ Checker :: struct {
 @(private = "file")
 checker: Checker
 
+saved_check_path_in_workspace :: proc(check_path: string, config: ^common.Config) -> bool {
+	if len(config.workspace_folders) == 0 do return true
+
+	for workspace in config.workspace_folders {
+		uri, ok := common.parse_uri(workspace.uri, context.temp_allocator)
+		if !ok do continue
+
+		rel, err := filepath.rel(uri.path, check_path, context.temp_allocator)
+		if err != nil do continue
+		rel, _ = filepath.replace_separators(rel, '/', context.temp_allocator)
+		if rel != ".." && !strings.has_prefix(rel, "../") do return true
+	}
+	return false
+}
+
 queue_check_request :: proc(mode: Check_Mode, path: string, config: ^common.Config) {
 	if !config.enable_diagnostics {
 		return
 	}
+	if mode == .Saved && !saved_check_path_in_workspace(path, config) do return
 	path := strings.clone(path, checker.allocator)
 	ok := chan.try_send(checker.send, Check_Request{check_mode = mode, path = path, config = config})
 	if !ok {
