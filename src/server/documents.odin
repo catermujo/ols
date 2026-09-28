@@ -395,16 +395,17 @@ document_refresh :: proc(document: ^Document, config: ^common.Config, writer: ^W
 		return .None
 	}
 
+	document_uri := document.uri.uri
 	path := document.uri.path
 
 	when ODIN_OS == .Windows {
 		path = common.get_case_sensitive_path(path, context.temp_allocator)
 	}
 
-	uri := common.create_uri(path, context.temp_allocator)
+	unused_uri := common.create_uri(path, context.temp_allocator)
 
-	remove_diagnostics(.Syntax, uri.uri)
-	remove_diagnostics(.Unused, uri.uri)
+	remove_diagnostics(.Syntax, document_uri)
+	remove_diagnostics(.Unused, unused_uri.uri)
 
 	if writer != nil && config.enable_parser_errors {
 		document.diagnosed_errors = true
@@ -412,7 +413,7 @@ document_refresh :: proc(document: ^Document, config: ^common.Config, writer: ^W
 		for error, i in errors {
 			add_diagnostics(
 				.Syntax,
-				uri.uri,
+				document_uri,
 				Diagnostic {
 					range = common.Range {
 						start = common.Position{line = error.line - 1, character = 0},

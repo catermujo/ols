@@ -3843,9 +3843,8 @@ resolve_location_identifier :: proc(ast_context: ^AstContext, node: ast.Ident) -
 
 	if global, ok := ast_context.globals[node.name]; ok {
 		symbol.range = common.get_token_range(global.name_expr, ast_context.file.src)
-		uri := common.create_uri(global.expr.pos.file, ast_context.allocator)
 		symbol.pkg = ast_context.document_package
-		symbol.uri = uri.uri
+		symbol.uri = ast_context.uri
 		return symbol, true
 	}
 
