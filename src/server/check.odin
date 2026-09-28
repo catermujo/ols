@@ -335,30 +335,120 @@ check_unused_imports :: proc(document: ^Document, config: ^common.Config, semant
 	}
 }
 
-resolve_check_paths :: proc(mode: Check_Mode, paths: []string, config: ^common.Config) -> []string {
-	if len(config.profile.checker_path) > 0 {
-		return config.profile.checker_path[:]
+Check_Target :: struct {
+	path: string,
+	profile_index: int, // -1 uses the selected default profile
+}
+
+normalize_checker_path :: proc(raw: string) -> string {
+	if raw == "" do return ""
+	result, _ := common.resolve_home_dir(raw, context.temp_allocator)
+	when ODIN_OS == .Windows {
+		if corrected := common.get_case_sensitive_path(result); corrected != "" do result = corrected
+	}
+	result, _ = filepath.replace_separators(result, '/', context.temp_allocator)
+	return path.clean(result, context.temp_allocator)
+}
+
+checker_match_prefix :: proc(file_path, raw_prefix: string) -> (int, bool) {
+	prefix := normalize_checker_path(raw_prefix)
+	if strings.has_suffix(prefix, "/**") do prefix = prefix[:len(prefix) - 3]
+	if prefix == "" do return 0, false
+	if file_path == prefix do return len(prefix), true
+	if prefix == "/" do return 1, strings.has_prefix(file_path, "/")
+	if strings.has_prefix(file_path, prefix) && len(file_path) > len(prefix) && file_path[len(prefix)] == '/' {
+		return len(prefix), true
+	}
+	return 0, false
+}
+
+select_checker_profile_index :: proc(config: ^common.Config, file_path: string) -> int {
+	best_index := -1
+	best_length := -1
+	for profile, i in config.checker_profiles {
+		for match_path in profile.checker_match_paths {
+			if length, matches := checker_match_prefix(file_path, match_path); matches && length > best_length {
+				best_index = i
+				best_length = length
+			}
+		}
+	}
+	return best_index
+}
+
+checker_profile_for_target :: proc(config: ^common.Config, index: int) -> ^common.ConfigProfile {
+	if index >= 0 && index < len(config.checker_profiles) do return &config.checker_profiles[index]
+	return &config.profile
+}
+
+resolve_check_targets :: proc(mode: Check_Mode, paths: []string, config: ^common.Config) -> []Check_Target {
+	results := make([dynamic]Check_Target, context.temp_allocator)
+	seen := make(map[Check_Target]struct{}, context.temp_allocator)
+
+	add_target :: proc(results: ^[dynamic]Check_Target, seen: ^map[Check_Target]struct{}, raw_path: string, index: int, config: ^common.Config) {
+		check_path := normalize_checker_path(raw_path)
+		if check_path == "" || check_path in config.checker_skip_packages do return
+		target := Check_Target{path = check_path, profile_index = index}
+		if target in seen^ do return
+		seen^[target] = {}
+		append(results, target)
 	}
 
-	if mode != .Workspace || config.enable_checker_only_saved {
-		results := make([dynamic]string, context.temp_allocator)
-		for p in paths {
-			if p == "" {
-				continue
-			}
-			dir := path.dir(p, context.temp_allocator)
-			if dir not_in config.checker_skip_packages && !slice.contains(results[:], dir) {
-				append(&results, dir)
+	if mode != .Workspace {
+		for raw_path in paths {
+			file_path := normalize_checker_path(raw_path)
+			if file_path == "" do continue
+			index := select_checker_profile_index(config, file_path)
+			profile := checker_profile_for_target(config, index)
+			if len(profile.checker_path) > 0 {
+				for check_path in profile.checker_path do add_target(&results, &seen, check_path, index, config)
+			} else {
+				add_target(&results, &seen, path.dir(file_path, context.temp_allocator), index, config)
 			}
 		}
 		return results[:]
 	}
 
-	if mode == .Workspace && config.enable_checker_workspace_diagnostics {
-		return fallback_find_odin_directories(config)
+	if len(config.profile.checker_path) > 0 {
+		for check_path in config.profile.checker_path do add_target(&results, &seen, check_path, -1, config)
+	} else if mode == .Workspace && !config.enable_checker_only_saved && config.enable_checker_workspace_diagnostics {
+		for check_path in fallback_find_odin_directories(config) do add_target(&results, &seen, check_path, -1, config)
 	}
+	return results[:]
+}
 
-	return {}
+Check_Job :: struct {
+	paths: []string,
+	profile_index: int,
+}
+
+resolve_check_jobs :: proc(targets: []Check_Target, use_workspace: bool) -> []Check_Job {
+	jobs := make([dynamic]Check_Job, 0, len(targets), context.temp_allocator)
+	dirs := make([dynamic]string, 0, len(targets), context.temp_allocator)
+	dirs_len := 0
+	profile_index := -1
+	MAX_WORKSPACE_PATHS_LEN :: 16384
+	for target in targets {
+		if !use_workspace || filepath.ext(target.path) == ".odin" {
+			paths := make([]string, 1, context.temp_allocator)
+			paths[0] = target.path
+			append(&jobs, Check_Job{paths, target.profile_index})
+			continue
+		}
+		if len(dirs) > 0 && (profile_index != target.profile_index ||
+		                     dirs_len + len(target.path) > MAX_WORKSPACE_PATHS_LEN) {
+			append(&jobs, Check_Job{dirs[:], profile_index})
+			dirs = make([dynamic]string, 0, len(targets), context.temp_allocator)
+			dirs_len = 0
+		}
+		profile_index = target.profile_index
+		append(&dirs, target.path)
+		dirs_len += len(target.path) + 3
+	}
+	if len(dirs) > 0 {
+		append(&jobs, Check_Job{dirs[:], profile_index})
+	}
+	return jobs[:]
 }
 
 CheckProcess :: struct {
@@ -423,9 +513,9 @@ check :: proc(mode: Check_Mode, check_paths: []string, buffers: []Check_Buffer, 
 		}
 		return path
 	}
-	paths := resolve_check_paths(mode, check_paths, config)
+	targets := resolve_check_targets(mode, check_paths, config)
 
-	if len(paths) == 0 {
+	if len(targets) == 0 {
 		return
 	}
 	progress_token := ""
@@ -453,38 +543,12 @@ check :: proc(mode: Check_Mode, check_paths: []string, buffers: []Check_Buffer, 
 		append(&collections, fmt.aprintf("-collection:%v=%v", k, v))
 	}
 
-	jobs := make([dynamic][]string, 0, len(paths), context.temp_allocator)
-	overlay := ""
 	use_workspace := command != checker.odin_without_workspace
+	overlay := ""
 	if use_workspace {
 		overlay = write_overlay(&checker.overlay, buffers)
-
-		// NOTE(bill): This is here just to keep the command line well within Windows' limit of 32767 characters
-		MAX_WORKSPACE_PATHS_LEN :: 16384
-
-		dirs := make([dynamic]string, 0, len(paths), context.temp_allocator)
-		dirs_len := 0
-		for p, i in paths {
-			if filepath.ext(p) == ".odin" {
-				append(&jobs, paths[i:i + 1])
-				continue
-			}
-			if dirs_len + len(p) > MAX_WORKSPACE_PATHS_LEN && len(dirs) > 0 {
-				append(&jobs, dirs[:])
-				dirs = make([dynamic]string, 0, len(paths), context.temp_allocator)
-				dirs_len = 0
-			}
-			append(&dirs, p)
-			dirs_len += len(p) + 3
-		}
-		if len(dirs) > 0 {
-			append(&jobs, dirs[:])
-		}
-	} else {
-		for _, i in paths {
-			append(&jobs, paths[i:i + 1])
-		}
 	}
+	jobs := resolve_check_jobs(targets, use_workspace)
 
 	max_concurrent_checks := max(1, os.get_processor_core_count())
 	processes := make([dynamic]CheckProcess, 0, len(jobs))
@@ -505,8 +569,10 @@ check :: proc(mode: Check_Mode, check_paths: []string, buffers: []Check_Buffer, 
 				semantics_file = fmt.tprintf("%s/semantics-%d.cbor", checker_dir(), next_index)
 				_ = os.remove(semantics_file)
 			}
-			check_path := jobs[next_index][0]
-			p, ok := start_check_process(command, jobs[next_index], collections[:], overlay, semantics_file, config)
+			job := jobs[next_index]
+			check_path := job.paths[0]
+			profile := checker_profile_for_target(config, job.profile_index)
+			p, ok := start_check_process(command, job.paths, collections[:], overlay, semantics_file, config, profile)
 			next_index += 1
 			if !ok {
 				completed_checks += 1
@@ -710,6 +776,7 @@ start_check_process :: proc(
 	overlay:     string,
 	semantics:   string,
 	config:      ^common.Config,
+	profile: ^common.ConfigProfile,
 ) -> (
 	CheckProcess,
 	bool,
@@ -721,7 +788,7 @@ start_check_process :: proc(
 	for c in collections {
 		append(&cmd, c)
 	}
-	for k, v in config.profile.defines {
+	for k, v in profile.defines {
 		append(&cmd, fmt.tprintf("-define:%s=%s", k, v))
 	}
 	append(&cmd, entry_point_opt, "-json-errors")
