@@ -3867,8 +3867,7 @@ resolve_location_identifier :: proc(ast_context: ^AstContext, node: ast.Ident) -
 		}
 	}
 
-	pkg := get_package_from_node(node)
-	if symbol, ok := lookup(node.name, pkg, node.pos.file); ok {
+	if symbol, ok := lookup(node.name, ast_context.current_package, node.pos.file); ok {
 		return symbol, ok
 	}
 
