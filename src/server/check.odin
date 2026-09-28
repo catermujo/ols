@@ -177,30 +177,86 @@ check_unused_imports :: proc(document: ^Document, config: ^common.Config) {
 	}
 }
 
-resolve_check_paths :: proc(mode: Check_Mode, paths: []string, config: ^common.Config) -> []string {
-	if len(config.profile.checker_path) > 0 {
-		return config.profile.checker_path[:]
+Check_Target :: struct {
+	path: string,
+	profile_index: int, // -1 uses the selected default profile
+}
+
+normalize_checker_path :: proc(raw: string) -> string {
+	if raw == "" do return ""
+	result, _ := common.resolve_home_dir(raw, context.temp_allocator)
+	when ODIN_OS == .Windows {
+		if corrected := common.get_case_sensitive_path(result); corrected != "" do result = corrected
+	}
+	result, _ = filepath.replace_separators(result, '/', context.temp_allocator)
+	return path.clean(result, context.temp_allocator)
+}
+
+checker_match_prefix :: proc(file_path, raw_prefix: string) -> (int, bool) {
+	prefix := normalize_checker_path(raw_prefix)
+	if strings.has_suffix(prefix, "/**") do prefix = prefix[:len(prefix) - 3]
+	if prefix == "" do return 0, false
+	if file_path == prefix do return len(prefix), true
+	if prefix == "/" do return 1, strings.has_prefix(file_path, "/")
+	if strings.has_prefix(file_path, prefix) && len(file_path) > len(prefix) && file_path[len(prefix)] == '/' {
+		return len(prefix), true
+	}
+	return 0, false
+}
+
+select_checker_profile_index :: proc(config: ^common.Config, file_path: string) -> int {
+	best_index := -1
+	best_length := -1
+	for profile, i in config.checker_profiles {
+		for match_path in profile.checker_match_paths {
+			if length, matches := checker_match_prefix(file_path, match_path); matches && length > best_length {
+				best_index = i
+				best_length = length
+			}
+		}
+	}
+	return best_index
+}
+
+checker_profile_for_target :: proc(config: ^common.Config, index: int) -> ^common.ConfigProfile {
+	if index >= 0 && index < len(config.checker_profiles) do return &config.checker_profiles[index]
+	return &config.profile
+}
+
+resolve_check_targets :: proc(mode: Check_Mode, paths: []string, config: ^common.Config) -> []Check_Target {
+	results := make([dynamic]Check_Target, context.temp_allocator)
+	seen := make(map[Check_Target]struct{}, context.temp_allocator)
+
+	add_target :: proc(results: ^[dynamic]Check_Target, seen: ^map[Check_Target]struct{}, raw_path: string, index: int, config: ^common.Config) {
+		check_path := normalize_checker_path(raw_path)
+		if check_path == "" || check_path in config.checker_skip_packages do return
+		target := Check_Target{path = check_path, profile_index = index}
+		if target in seen^ do return
+		seen^[target] = {}
+		append(results, target)
 	}
 
-	if mode == .Saved || config.enable_checker_only_saved {
-		results := make([dynamic]string, context.temp_allocator)
-		for p in paths {
-			if p == "" {
-				continue
-			}
-			dir := path.dir(p, context.temp_allocator)
-			if dir not_in config.checker_skip_packages {
-				append(&results, dir)
+	if mode == .Saved {
+		for raw_path in paths {
+			file_path := normalize_checker_path(raw_path)
+			if file_path == "" do continue
+			index := select_checker_profile_index(config, file_path)
+			profile := checker_profile_for_target(config, index)
+			if len(profile.checker_path) > 0 {
+				for check_path in profile.checker_path do add_target(&results, &seen, check_path, index, config)
+			} else {
+				add_target(&results, &seen, path.dir(file_path, context.temp_allocator), index, config)
 			}
 		}
 		return results[:]
 	}
 
-	if mode == .Workspace && config.enable_checker_workspace_diagnostics {
-		return fallback_find_odin_directories(config)
+	if len(config.profile.checker_path) > 0 {
+		for check_path in config.profile.checker_path do add_target(&results, &seen, check_path, -1, config)
+	} else if mode == .Workspace && !config.enable_checker_only_saved && config.enable_checker_workspace_diagnostics {
+		for check_path in fallback_find_odin_directories(config) do add_target(&results, &seen, check_path, -1, config)
 	}
-
-	return {}
+	return results[:]
 }
 
 CheckProcess :: struct {
@@ -215,9 +271,9 @@ CheckProcess :: struct {
 check_progress_id: int
 
 check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config, writer: ^Writer) {
-	paths := resolve_check_paths(mode, check_paths, config)
+	targets := resolve_check_targets(mode, check_paths, config)
 
-	if len(paths) == 0 {
+	if len(targets) == 0 {
 		return
 	}
 	progress_token := ""
@@ -241,30 +297,31 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config, w
 	}
 
 	max_concurrent_checks := max(1, os.get_processor_core_count())
-	processes := make([dynamic]CheckProcess, 0, len(paths))
+	processes := make([dynamic]CheckProcess, 0, len(targets))
 
-	errors := make([dynamic]Json_Errors, 0, len(paths), context.temp_allocator)
+	errors := make([dynamic]Json_Errors, 0, len(targets), context.temp_allocator)
 
 	next_index := 0
 	running_count := 0
 	start := time.now()
 	timed_out := false
 
-	for running_count > 0 || next_index < len(paths) {
-		for running_count < max_concurrent_checks && next_index < len(paths) {
-			check_path := paths[next_index]
-			p, ok := start_check_process(check_path, collections[:], config)
+	for running_count > 0 || next_index < len(targets) {
+		for running_count < max_concurrent_checks && next_index < len(targets) {
+			target := targets[next_index]
+			profile := checker_profile_for_target(config, target.profile_index)
+			p, ok := start_check_process(target.path, collections[:], config, profile)
 			next_index += 1
 			if !ok {
 				completed_checks += 1
 				continue
 			}
-			p.path = check_path
+			p.path = target.path
 			append(&processes, p)
 			running_count += 1
 			if progress_token != "" {
-				progress_report(progress_token, fmt.tprintf("Checking %s", filepath.base(check_path)),
-					completed_checks * 100 / len(paths), writer)
+				progress_report(progress_token, fmt.tprintf("Checking %s", filepath.base(target.path)),
+					completed_checks * 100 / len(targets), writer)
 			}
 		}
 
@@ -306,8 +363,8 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config, w
 			completed_checks += 1
 			if progress_token != "" {
 				progress_report(progress_token,
-					fmt.tprintf("Checked %s (%d/%d)", filepath.base(p.path), completed_checks, len(paths)),
-					completed_checks * 100 / len(paths), writer)
+					fmt.tprintf("Checked %s (%d/%d)", filepath.base(p.path), completed_checks, len(targets)),
+					completed_checks * 100 / len(targets), writer)
 			}
 
 			for {
@@ -338,7 +395,7 @@ check :: proc(mode: Check_Mode, check_paths: []string, config: ^common.Config, w
 			}
 		}
 
-		if running_count > 0 || next_index < len(paths) {
+		if running_count > 0 || next_index < len(targets) {
 			time.sleep(1 * time.Millisecond)
 		}
 	}
@@ -423,6 +480,7 @@ start_check_process :: proc(
 	check_path: string,
 	collections: []string,
 	config: ^common.Config,
+	profile: ^common.ConfigProfile,
 ) -> (
 	CheckProcess,
 	bool,
@@ -441,7 +499,7 @@ start_check_process :: proc(
 	for c in collections {
 		append(&cmd, c)
 	}
-	for k, v in config.profile.defines {
+	for k, v in profile.defines {
 		append(&cmd, fmt.tprintf("-define:%s=%s", k, v))
 	}
 	append(&cmd, entry_point_opt, "-json-errors")

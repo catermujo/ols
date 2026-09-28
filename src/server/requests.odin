@@ -387,6 +387,14 @@ call :: proc(value: json.Value, id: RequestId, writer: ^Writer, config: ^common.
 	}
 }
 
+resolve_checker_config_path :: proc(raw, root: string) -> string {
+	expanded, _ := common.resolve_home_dir(raw, context.temp_allocator)
+	if filepath.is_abs(expanded) {
+		return strings.clone(expanded, context.allocator)
+	}
+	return path.join({root, expanded}, context.allocator)
+}
+
 read_ols_initialize_options :: proc(config: ^common.Config, ols_config: OlsConfig, uri: common.Uri) {
 	if v, ok := ols_config.enable_parser_errors.(bool); ok {
 		config.enable_parser_errors = v
@@ -488,26 +496,34 @@ read_ols_initialize_options :: proc(config: ^common.Config, ols_config: OlsConfi
 		config.struct_fields_underscore_visibility = .Private_Package
 	}
 
-	for profile in ols_config.profiles {
-		if ols_config.profile == profile.name {
-			config.profile.checker_path = make([dynamic]string, len(profile.checker_path))
-			config.profile.exclude_path = make([dynamic]string, len(profile.exclude_path))
-
-			for checker_path, i in profile.checker_path {
-				config.profile.checker_path[i] = path.join(elems = {uri.path, checker_path})
+	if len(ols_config.profiles) > 0 {
+		config.checker_profiles = make([dynamic]common.ConfigProfile, 0, len(ols_config.profiles), context.allocator)
+		for profile in ols_config.profiles {
+			resolved := common.ConfigProfile {
+				name = strings.clone(profile.name, context.allocator),
+				os = strings.clone(profile.os, context.allocator),
+				arch = strings.clone(profile.arch, context.allocator),
+				checker_path = make([dynamic]string, context.allocator),
+				checker_match_paths = make([dynamic]string, context.allocator),
+				exclude_path = make([dynamic]string, context.allocator),
+				defines = make(map[string]string, context.allocator),
 			}
-			for exclude_path, i in profile.exclude_path {
-				config.profile.exclude_path[i] = path.join(elems = {uri.path, exclude_path})
+			for checker_path in profile.checker_path {
+				append(&resolved.checker_path, resolve_checker_config_path(checker_path, uri.path))
 			}
-
-			config.profile.os = strings.clone(profile.os)
-			config.profile.arch = strings.clone(profile.arch)
-
+			for match_path in profile.checker_match_paths {
+				append(&resolved.checker_match_paths, resolve_checker_config_path(match_path, uri.path))
+			}
+			for exclude_path in profile.exclude_path {
+				append(&resolved.exclude_path, path.join({uri.path, exclude_path}, context.allocator))
+			}
 			for key, value in profile.defines {
-				config.profile.defines[strings.clone(key)] = strings.clone(value)
+				resolved.defines[strings.clone(key, context.allocator)] = strings.clone(value, context.allocator)
 			}
-
-			break
+			append(&config.checker_profiles, resolved)
+			if ols_config.profile == profile.name {
+				config.profile = resolved
+			}
 		}
 	}
 

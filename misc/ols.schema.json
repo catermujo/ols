@@ -226,6 +226,13 @@
 							"type": "string"
 						}
 					},
+					"checker_match_paths": {
+						"type": "array",
+						"description": "Saved-file path prefixes that select this checker profile. The longest match wins.",
+						"items": {
+							"type": "string"
+						}
+					},
 					"exclude_path": {
 						"type": "array",
 						"description": "List of paths that will be excluded from workspace symbol searches.",
