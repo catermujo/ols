@@ -420,6 +420,8 @@ resolve_when_expr :: proc(
 			}
 		case ^ast.Implicit_Selector_Expr:
 			return odin_expr.field.name, true
+		case ^ast.Selector_Expr:
+			return When_Expr_Unknown{}, true
 		case ^ast.Unary_Expr:
 			if odin_expr.op.kind == .Not {
 				expr := resolve_when_expr(when_expr_map, odin_expr.expr, defer_unknown) or_return
