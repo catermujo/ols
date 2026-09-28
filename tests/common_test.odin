@@ -69,6 +69,13 @@ common_create_uri :: proc(t: ^testing.T) {
 }
 
 @(test)
+common_create_uri_path_uses_requested_allocator :: proc(t: ^testing.T) {
+	uri := common.create_uri("test/with space/main.odin", context.allocator)
+	testing.expect(t, uri.path != "")
+	common.delete_uri(uri, context.allocator)
+}
+
+@(test)
 common_parse_uri :: proc(t: ^testing.T) {
 	when ODIN_OS == .Windows {
 		to_test := []string{"file:///C:\\Hello\\my folder\\main.odin", "file:///C%3A\\Hello\\my%20folder\\main.odin"}

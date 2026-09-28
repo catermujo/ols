@@ -78,8 +78,8 @@ uri_to_path :: proc(uri: string, allocator: mem.Allocator) -> string {
 			path = path[1:]
 		}
 	}
-	path, _ = resolve_home_dir(path, allocator)
-	return path
+	path, _ = resolve_home_dir(path, context.temp_allocator)
+	return strings.clone(path, allocator)
 }
 
 delete_uri :: proc(uri: Uri, allocator := context.allocator, loc := #caller_location) {
