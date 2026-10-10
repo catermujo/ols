@@ -2552,6 +2552,13 @@ visit_signature_list :: proc(
 	options := List_Options{},
 ) -> ^Document {
 	document := empty()
+	if .Enforce_Newline in options && len(list.list) > 0 {
+		p.source_position = list.list[0].pos
+		comment, _ := visit_comments(p, list.list[0].pos)
+		if _, is_nil := comment.(Document_Nil); !is_nil {
+			document = cons(document, comment, newline(1))
+		}
+	}
 
 	for field, i in list.list {
 		p.source_position = field.pos
