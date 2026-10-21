@@ -918,6 +918,14 @@ block_uses_do :: proc(stmt: ^ast.Stmt) -> bool {
 	return false
 }
 
+// Nested `do` headers of the same kind must not share a group id, or the inner
+// header overwrites the outer mode and drops the outer closing brace.
+@(private)
+do_header_group_id :: proc(kind: string, stmt: ^ast.Stmt) -> string {
+	buf: [32]byte
+	return strings.concatenate({kind, strconv.write_int(buf[:], i64(stmt.pos.offset), 10)})
+}
+
 @(private)
 visit_stmt :: proc(
 	p: ^Printer,
@@ -974,13 +982,13 @@ visit_stmt :: proc(
 				document = cons(document, break_with_no_newline())
 			}
 		} else if do_group_id != "" {
+			begin_brace := visit_begin_brace(p, v.pos, block_type)
+			if p.config.space_single_line_blocks && is_single_line {
+				begin_brace = cons(begin_brace, break_with_no_newline())
+			}
 			document = cons(
 				document,
-				if_break_or_document(
-					visit_begin_brace(p, v.pos, block_type),
-					cons(text("do"), break_with(" ", false)),
-					do_group_id,
-				),
+				if_break_or_document(begin_brace, cons(text("do"), break_with(" ", false)), do_group_id),
 			)
 		} else {
 			document = cons(document, text("do"), break_with(" ", false))
@@ -1021,10 +1029,15 @@ visit_stmt :: proc(
 			}
 			document = cons(document, visit_end_brace(p, v.end))
 		} else if do_group_id != "" {
-			document = cons(document, if_break_or_document(visit_end_brace(p, v.end), empty(), do_group_id))
+			end_brace := visit_end_brace(p, v.end)
+			if p.config.space_single_line_blocks && is_single_line {
+				end_brace = cons(break_with_no_newline(), end_brace)
+			}
+			document = cons(document, if_break_or_document(end_brace, empty(), do_group_id))
 		}
 	case ^ast.If_Stmt:
-		if_do_group_id := "if_do_header" if !p.config.convert_do && block_uses_do(v.body) else ""
+		if_do_group_id :=
+			do_header_group_id("if_do_header", v) if !p.config.convert_do && block_uses_do(v.body) else ""
 		if v.label != nil {
 			document = cons(document, visit_expr(p, v.label), text(":"), break_with_space())
 		}
@@ -1181,7 +1194,8 @@ visit_stmt :: proc(
 	case ^ast.Expr_Stmt:
 		document = cons(document, visit_expr(p, v.expr))
 	case ^ast.For_Stmt:
-		for_do_group_id := "for_do_header" if !p.config.convert_do && block_uses_do(v.body) else ""
+		for_do_group_id :=
+			do_header_group_id("for_do_header", v) if !p.config.convert_do && block_uses_do(v.body) else ""
 		if v.label != nil {
 			document = cons(document, visit_expr(p, v.label), text(":"), break_with_space())
 		}
@@ -1223,7 +1237,8 @@ visit_stmt :: proc(
 		set_source_position(p, v.body.end)
 
 	case ^ast.Unroll_Range_Stmt:
-		unroll_do_group_id := "unroll_do_header" if !p.config.convert_do && block_uses_do(v.body) else ""
+		unroll_do_group_id :=
+			do_header_group_id("unroll_do_header", v) if !p.config.convert_do && block_uses_do(v.body) else ""
 		if v.label != nil {
 			document = cons(document, visit_expr(p, v.label), text(":"), break_with_space())
 		}
@@ -1342,11 +1357,11 @@ visit_stmt :: proc(
 		document = cons_with_nopl(document, visit_stmt(p, v.body))
 		set_source_position(p, v.body.end)
 	case ^ast.When_Stmt:
-		when_group_id := "when_header"
-		when_do_group_id := when_group_id if !p.config.convert_do && block_uses_do(v.body) else ""
+		when_do_group_id :=
+			do_header_group_id("when_header", v) if !p.config.convert_do && block_uses_do(v.body) else ""
 
 		when_header := cons_with_nopl(text("when"), visit_expr(p, v.cond))
-		document = cons(document, group(when_header, Document_Group_Options{id = when_group_id}))
+		document = cons(document, group(when_header, Document_Group_Options{id = when_do_group_id}))
 
 		set_source_position(p, v.body.pos)
 		document = cons_with_nopl(document, visit_stmt(p, v.body, do_group_id = when_do_group_id))
