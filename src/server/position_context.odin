@@ -565,7 +565,7 @@ get_document_position_dynamic_array :: proc(array: $A/[dynamic]^$T, position_con
 }
 
 position_in_node :: proc(node: $T/^ast.Node, position: common.AbsolutePosition) -> bool {
-	return node != nil && node.pos.offset <= position && position <= node.end.offset
+	return node != nil && int(node.pos.offset) <= position && position <= int(node.end.offset)
 }
 
 position_in_node_or_label :: proc(node: $T/^ast.Node, position: common.AbsolutePosition) -> bool {
@@ -595,7 +595,7 @@ position_in_node_or_label :: proc(node: $T/^ast.Node, position: common.AbsoluteP
 
 position_in_exprs :: proc(nodes: []^ast.Expr, position: common.AbsolutePosition) -> bool {
 	for node in nodes {
-		if node != nil && node.pos.offset <= position && position <= node.end.offset {
+		if node != nil && int(node.pos.offset) <= position && position <= int(node.end.offset) {
 			return true
 		}
 	}
@@ -731,7 +731,7 @@ get_document_position_node :: proc(node: ^ast.Node, position_context: ^DocumentP
 		   n.field != nil &&
 		   !(position_context.hint == .Completion &&
 				   position_in_node(n.expr, position_context.position) &&
-				   position_context.position < n.expr.end.offset) {
+				   position_context.position < int(n.expr.end.offset)) {
 			// When completing inside the receiver, i.e. foo(a{*}).bar, the selector is not the one being completed
 			position_context.selector = n.expr
 			position_context.field = n.field
@@ -858,7 +858,7 @@ get_document_position_node :: proc(node: ^ast.Node, position_context: ^DocumentP
 		get_document_position(n.attributes, position_context)
 
 		for name in n.names {
-			if position_in_node(name, position_context.position) && n.end.line - 1 == position_context.line {
+			if position_in_node(name, position_context.position) && int(n.end.line) - 1 == position_context.line {
 				position_context.abort_completion = true
 				break
 			}

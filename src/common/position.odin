@@ -106,7 +106,7 @@ go_backwards_to_endline :: proc(offset: int, document_text: []u8) -> int {
 
 token_pos_to_position :: proc(pos: tokenizer.Pos, document_text: string) -> (position: Position) {
 
-	pos_offset := min(len(document_text) - 1, pos.offset)
+	pos_offset := min(len(document_text) - 1, int(pos.offset))
 	offset := go_backwards_to_endline(pos_offset, transmute([]u8)document_text)
 	
 	if offset < 0 {
@@ -115,8 +115,8 @@ token_pos_to_position :: proc(pos: tokenizer.Pos, document_text: string) -> (pos
 	}
 
 	return {
-		line      = pos.line-1,
-		character = get_character_offset_u8_to_u16(pos.column-1, transmute([]u8)document_text[offset:]),
+		line      = int(pos.line)-1,
+		character = get_character_offset_u8_to_u16(int(pos.column)-1, transmute([]u8)document_text[offset:]),
 	}
 }
 

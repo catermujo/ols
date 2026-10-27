@@ -159,7 +159,7 @@ get_semantic_tokens :: proc(
 
 	for decl in document.ast.decls {
 		//Look for declarations that overlap with range
-		if range.start.line - margin <= decl.end.line && decl.pos.line <= range.end.line + margin {
+		if range.start.line - margin <= int(decl.end.line) && int(decl.pos.line) <= int(range.end.line) + margin {
 			visit_node(decl, &builder)
 		}
 	}
@@ -201,7 +201,7 @@ write_semantic_node :: proc(
 
 	name := get_ast_node_string(node, builder.src)
 
-	write_semantic_at_pos(builder, node.pos.offset, len(name), type, modifiers)
+	write_semantic_at_pos(builder, int(node.pos.offset), len(name), type, modifiers)
 }
 
 write_semantic_token :: proc(
@@ -210,7 +210,7 @@ write_semantic_token :: proc(
 	type: SemanticTokenTypes,
 	modifiers: SemanticTokenModifiers = {},
 ) {
-	write_semantic_at_pos(builder, token.pos.offset, len(token.text), type, modifiers)
+	write_semantic_at_pos(builder, int(token.pos.offset), len(token.text), type, modifiers)
 }
 
 visit_nodes :: proc(array: []$T/^ast.Node, builder: ^SemanticTokenBuilder) {
@@ -575,7 +575,7 @@ visit_import_decl :: proc(decl: ^ast.Import_Decl, builder: ^SemanticTokenBuilder
 			break
 		}
 
-		write_semantic_at_pos(builder, decl.relpath.pos.offset + pos, end - pos, .Namespace)
+		write_semantic_at_pos(builder, int(decl.relpath.pos.offset) + pos, end - pos, .Namespace)
 	}
 }
 
@@ -588,7 +588,7 @@ visit_ident :: proc(
 	symbol_and_node, in_symbols := builder.symbols[cast(uintptr)symbol_ptr]
 	if !in_symbols {
 		if builder.semantics != nil {
-			if type, semantic_modifiers, ok := semantics_token(builder.semantics, ident.pos.offset); ok {
+			if type, semantic_modifiers, ok := semantics_token(builder.semantics, int(ident.pos.offset)); ok {
 				write_semantic_node(builder, ident, type, modifiers + semantic_modifiers)
 			}
 		}

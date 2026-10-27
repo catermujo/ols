@@ -57,8 +57,8 @@ get_inlay_hints :: proc(
 			}
 
 			margin := 20 // skip nodes outside the range
-			if data.range.start.line - margin > node.end.line &&
-			   data.range.end.line   + margin < node.pos.line {
+			if data.range.start.line - margin > int(node.end.line) &&
+			   int(data.range.end.line)   + margin < int(node.pos.line) {
 				return nil
 			}
 

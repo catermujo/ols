@@ -43,9 +43,9 @@ resolve_poly :: proc(
 					type_expr, _, _ := unwrap_pointer_expr(call_symbol.type_expr)
 					save_poly_map(ident, type_expr, poly_map)
 				} else if untyped_value, ok := call_symbol.value.(SymbolUntypedValue); ok {
-					save_poly_map(ident, symbol_to_expr(call_symbol, call_node.pos.file), poly_map)
+					save_poly_map(ident, symbol_to_expr(call_symbol, tokenizer.file_path(call_node.pos.file)), poly_map)
 				} else if is_compound_symbol_value(call_symbol.value) {
-					save_poly_map(ident, symbol_to_expr(call_symbol, call_node.pos.file), poly_map)
+					save_poly_map(ident, symbol_to_expr(call_symbol, tokenizer.file_path(call_node.pos.file)), poly_map)
 				} else if .Anonymous in call_symbol.flags {
 					save_poly_map(ident, call_node, poly_map)
 				} else if call_symbol.name != "" {
@@ -55,7 +55,7 @@ resolve_poly :: proc(
 						poly_map,
 					)
 				} else {
-					save_poly_map(ident, symbol_to_expr(call_symbol, call_node.pos.file), poly_map)
+					save_poly_map(ident, symbol_to_expr(call_symbol, tokenizer.file_path(call_node.pos.file)), poly_map)
 				}
 				remaining := call_symbol.pointers - param_pointers
 				if remaining > 0 {
@@ -540,7 +540,7 @@ resolve_generic_function_ast :: proc(
 	}
 
 	range := common.get_token_range(proc_lit, ast_context.file.src)
-	uri := common.create_uri(proc_lit.pos.file, ast_context.allocator).uri
+	uri := common.create_uri(tokenizer.file_path(proc_lit.pos.file), ast_context.allocator).uri
 	return resolve_generic_function_symbol(ast_context, params, results, proc_lit.inlining, proc_symbol)
 }
 

@@ -125,7 +125,7 @@ get_local :: proc(ast_context: AstContext, ident: ast.Ident) -> (DocumentLocal, 
 		#reverse for local in local_stack {
 			// Ensure that if the identifier has a file, the local is also part of the same file
 			// and the context is in the correct package
-			correct_file := ident.pos.file == "" || local.lhs.pos.file == ident.pos.file
+			correct_file := ident.pos.file == 0 || local.lhs.pos.file == ident.pos.file
 			correct_package := ast_context.current_package == ast_context.document_package
 			if !correct_file || !correct_package {
 				continue
@@ -134,7 +134,7 @@ get_local :: proc(ast_context: AstContext, ident: ast.Ident) -> (DocumentLocal, 
 			if local.local_global {
 				return local, true
 			}
-			if local.offset <= ident.pos.offset || local.lhs.pos.offset == ident.pos.offset {
+			if local.offset <= int(ident.pos.offset) || int(local.lhs.pos.offset) == int(ident.pos.offset) {
 				// checking equal offsets is a hack to allow matching lhs ident in var decls
 				// because otherwise minimal offset begins after the decl
 				return local, true
@@ -404,7 +404,7 @@ get_locals_value_decl :: proc(file: ast.File, value_decl: ast.Value_Decl, ast_co
 				ast_context,
 				name,
 				value_decl.type,
-				value_decl.end.offset,
+				int(value_decl.end.offset),
 				str,
 				ast_context.non_mutable_only,
 				false,
@@ -471,7 +471,7 @@ get_locals_value_decl :: proc(file: ast.File, value_decl: ast.Value_Decl, ast_co
 			ast_context,
 			name,
 			expr,
-			value_decl.end.offset,
+			int(value_decl.end.offset),
 			str,
 			ast_context.non_mutable_only,
 			false, // calls[result_i] or_else false, // TODO: find a good way to handle this
@@ -512,7 +512,7 @@ get_locals_enum_fields :: proc(enum_type: ^ast.Enum_Type, ast_context: ^AstConte
 			ast_context,
 			field,
 			selector,
-			field.pos.offset,
+			int(field.pos.offset),
 			name.name,
 			false,
 			false,
@@ -538,7 +538,7 @@ get_locals_stmt :: proc(
 		return
 	}
 
-	if stmt.pos.offset > document_position.position &&
+	if int(stmt.pos.offset) > document_position.position &&
 	   !position_in_node_or_label(stmt, document_position.position) {
 		return
 	}
@@ -593,8 +593,8 @@ get_locals_case_clause :: proc(
 	ast_context: ^AstContext,
 	document_position: ^DocumentPositionContext,
 ) {
-	if !(case_clause.pos.offset <= document_position.position &&
-		   document_position.position <= case_clause.end.offset) {
+	if !(int(case_clause.pos.offset) <= document_position.position &&
+		   document_position.position <= int(case_clause.end.offset)) {
 		return
 	}
 
@@ -635,12 +635,12 @@ get_locals_block_stmt :: proc(
 
 	if !skip_position_check {
 		if ast_context.non_mutable_only {
-			if !(block.pos.offset <= document_position.nested_position &&
-				   document_position.nested_position <= block.end.offset) {
+			if !(int(block.pos.offset) <= document_position.nested_position &&
+				   document_position.nested_position <= int(block.end.offset)) {
 				return
 			}
 		} else {
-			if !(block.pos.offset <= document_position.position && document_position.position <= block.end.offset) {
+			if !(int(block.pos.offset) <= document_position.position && document_position.position <= int(block.end.offset)) {
 				return
 			}
 		}
@@ -729,7 +729,7 @@ get_locals_assign_stmt :: proc(file: ast.File, stmt: ast.Assign_Stmt, ast_contex
 				ast_context,
 				ident,
 				results[i],
-				ident.pos.offset,
+				int(ident.pos.offset),
 				ident.name,
 				ast_context.non_mutable_only,
 				false,
@@ -750,7 +750,7 @@ get_locals_if_stmt :: proc(
 	if position_in_node_or_label(stmt, document_position.position) {
 		store_label(ast_context, stmt.label)
 	}
-	if !(stmt.pos.offset <= document_position.position && document_position.position <= stmt.end.offset) {
+	if !(int(stmt.pos.offset) <= document_position.position && document_position.position <= int(stmt.end.offset)) {
 		return
 	}
 
@@ -768,7 +768,7 @@ get_locals_for_range_stmt :: proc(
 	if position_in_node_or_label(stmt, document_position.position) {
 		store_label(ast_context, stmt.label)
 	}
-	if !(stmt.pos.offset <= document_position.position && document_position.position <= stmt.end.offset) {
+	if !(int(stmt.pos.offset) <= document_position.position && document_position.position <= int(stmt.end.offset)) {
 		return
 	}
 
@@ -788,7 +788,7 @@ get_locals_unroll_range_stmt :: proc(
 	if position_in_node_or_label(stmt, document_position.position) {
 		store_label(ast_context, stmt.label)
 	}
-	if !(stmt.pos.offset <= document_position.position && document_position.position <= stmt.end.offset) {
+	if !(int(stmt.pos.offset) <= document_position.position && document_position.position <= int(stmt.end.offset)) {
 		return
 	}
 
@@ -824,7 +824,7 @@ get_locals_range_vals :: proc(
 						ast_context,
 						ident,
 						type_expr,
-						ident.pos.offset,
+						int(ident.pos.offset),
 						ident.name,
 						ast_context.non_mutable_only,
 						false,
@@ -862,7 +862,7 @@ get_locals_range_vals :: proc(
 							ast_context,
 							ident,
 							results[result_i],
-							ident.pos.offset,
+							int(ident.pos.offset),
 							ident.name,
 							ast_context.non_mutable_only,
 							false,
@@ -881,7 +881,7 @@ get_locals_range_vals :: proc(
 							ast_context,
 							ident,
 							make_rune_ast(ast_context, ident.pos, ident.end),
-							ident.pos.offset,
+							int(ident.pos.offset),
 							ident.name,
 							ast_context.non_mutable_only,
 							false,
@@ -900,7 +900,7 @@ get_locals_range_vals :: proc(
 							ast_context,
 							ident,
 							make_rune_ast(ast_context, ident.pos, ident.end),
-							ident.pos.offset,
+							int(ident.pos.offset),
 							ident.name,
 							ast_context.non_mutable_only,
 							false,
@@ -918,7 +918,7 @@ get_locals_range_vals :: proc(
 						ast_context,
 						ident,
 						v.key,
-						ident.pos.offset,
+						int(ident.pos.offset),
 						ident.name,
 						ast_context.non_mutable_only,
 						false,
@@ -938,7 +938,7 @@ get_locals_range_vals :: proc(
 						ast_context,
 						ident,
 						value,
-						ident.pos.offset,
+						int(ident.pos.offset),
 						ident.name,
 						ast_context.non_mutable_only,
 						false,
@@ -955,7 +955,7 @@ get_locals_range_vals :: proc(
 						ast_context,
 						ident,
 						v.expr,
-						ident.pos.offset,
+						int(ident.pos.offset),
 						ident.name,
 						ast_context.non_mutable_only,
 						false,
@@ -971,7 +971,7 @@ get_locals_range_vals :: proc(
 						ast_context,
 						ident,
 						make_int_ast(ast_context, ident.pos, ident.end),
-						ident.pos.offset,
+						int(ident.pos.offset),
 						ident.name,
 						ast_context.non_mutable_only,
 						false,
@@ -988,7 +988,7 @@ get_locals_range_vals :: proc(
 						ast_context,
 						ident,
 						v.expr,
-						ident.pos.offset,
+						int(ident.pos.offset),
 						ident.name,
 						ast_context.non_mutable_only,
 						false,
@@ -1015,7 +1015,7 @@ get_locals_range_vals :: proc(
 						ast_context,
 						ident,
 						rhs,
-						ident.pos.offset,
+						int(ident.pos.offset),
 						ident.name,
 						ast_context.non_mutable_only,
 						false,
@@ -1032,7 +1032,7 @@ get_locals_range_vals :: proc(
 						ast_context,
 						ident,
 						v.expr,
-						ident.pos.offset,
+						int(ident.pos.offset),
 						ident.name,
 						ast_context.non_mutable_only,
 						false,
@@ -1048,7 +1048,7 @@ get_locals_range_vals :: proc(
 						ast_context,
 						ident,
 						make_int_ast(ast_context, ident.pos, ident.end),
-						ident.pos.offset,
+						int(ident.pos.offset),
 						ident.name,
 						ast_context.non_mutable_only,
 						false,
@@ -1065,7 +1065,7 @@ get_locals_range_vals :: proc(
 						ast_context,
 						ident,
 						v.expr,
-						ident.pos.offset,
+						int(ident.pos.offset),
 						ident.name,
 						ast_context.non_mutable_only,
 						false,
@@ -1081,7 +1081,7 @@ get_locals_range_vals :: proc(
 						ast_context,
 						ident,
 						make_int_ast(ast_context, ident.pos, ident.end),
-						ident.pos.offset,
+						int(ident.pos.offset),
 						ident.name,
 						ast_context.non_mutable_only,
 						false,
@@ -1098,7 +1098,7 @@ get_locals_range_vals :: proc(
 						ast_context,
 						ident,
 						expr,
-						ident.pos.offset,
+						int(ident.pos.offset),
 						ident.name,
 						ast_context.non_mutable_only,
 						false,
@@ -1114,7 +1114,7 @@ get_locals_range_vals :: proc(
 						ast_context,
 						ident,
 						make_int_ast(ast_context, ident.pos, ident.end),
-						ident.pos.offset,
+						int(ident.pos.offset),
 						ident.name,
 						ast_context.non_mutable_only,
 						false,
@@ -1140,7 +1140,7 @@ get_locals_for_stmt :: proc(
 		store_label(ast_context, stmt.label)
 	}
 
-	if !(stmt.pos.offset <= document_position.position && document_position.position <= stmt.end.offset) {
+	if !(int(stmt.pos.offset) <= document_position.position && document_position.position <= int(stmt.end.offset)) {
 		return
 	}
 
@@ -1157,7 +1157,7 @@ get_locals_switch_stmt :: proc(
 	if position_in_node_or_label(stmt, document_position.position) {
 		store_label(ast_context, stmt.label)
 	}
-	if !(stmt.pos.offset <= document_position.position && document_position.position <= stmt.end.offset) {
+	if !(int(stmt.pos.offset) <= document_position.position && document_position.position <= int(stmt.end.offset)) {
 		return
 	}
 
@@ -1174,7 +1174,7 @@ get_locals_type_switch_stmt :: proc(
 	if position_in_node_or_label(stmt, document_position.position) {
 		store_label(ast_context, stmt.label)
 	}
-	if !(stmt.pos.offset <= document_position.position && document_position.position <= stmt.end.offset) {
+	if !(int(stmt.pos.offset) <= document_position.position && document_position.position <= int(stmt.end.offset)) {
 		return
 	}
 
@@ -1186,12 +1186,12 @@ get_locals_type_switch_stmt :: proc(
 
 	if block, ok := stmt.body.derived.(^ast.Block_Stmt); ok {
 		for block_stmt, i in block.stmts {
-			upper_bound := stmt.end.offset
+			upper_bound := int(stmt.end.offset)
 			if i < len(block.stmts) - 1 {
-				upper_bound = block.stmts[i + 1].pos.offset
+				upper_bound = int(block.stmts[i + 1].pos.offset)
 			}
 			if cause, ok := block_stmt.derived.(^ast.Case_Clause);
-			   ok && cause.pos.offset <= document_position.position && document_position.position <= upper_bound {
+			   ok && int(cause.pos.offset) <= document_position.position && document_position.position <= upper_bound {
 				tag := stmt.tag.derived.(^ast.Assign_Stmt)
 
 				if len(tag.lhs) == 1 && len(cause.list) == 1 {
@@ -1200,7 +1200,7 @@ get_locals_type_switch_stmt :: proc(
 							ast_context,
 							ident,
 							cause.list[0],
-							ident.pos.offset,
+							int(ident.pos.offset),
 							ident.name,
 							ast_context.non_mutable_only,
 							false,
@@ -1246,7 +1246,7 @@ get_locals_proc_param_and_results :: proc(
 						ast_context,
 						name,
 						arg.type,
-						name.pos.offset,
+						int(name.pos.offset),
 						str,
 						ast_context.non_mutable_only,
 						false,
@@ -1267,7 +1267,7 @@ get_locals_proc_param_and_results :: proc(
 						ast_context,
 						name,
 						arg.default_value,
-						name.pos.offset,
+						int(name.pos.offset),
 						str,
 						ast_context.non_mutable_only,
 						false,
@@ -1292,7 +1292,7 @@ get_locals_proc_param_and_results :: proc(
 						ast_context,
 						name,
 						result.type,
-						name.pos.offset,
+						int(name.pos.offset),
 						str,
 						ast_context.non_mutable_only,
 						false,
@@ -1306,7 +1306,7 @@ get_locals_proc_param_and_results :: proc(
 						ast_context,
 						name,
 						result.default_value,
-						name.pos.offset,
+						int(name.pos.offset),
 						str,
 						ast_context.non_mutable_only,
 						false,
@@ -1335,7 +1335,7 @@ get_locals_poly :: proc(file: ast.File, params: ^ast.Field_List, ast_context: ^A
 				ast_context,
 				poly.type,
 				poly,
-				poly.type.pos.offset,
+				int(poly.type.pos.offset),
 				poly.type.name,
 				false,
 				false,
@@ -1355,7 +1355,7 @@ get_locals_poly :: proc(file: ast.File, params: ^ast.Field_List, ast_context: ^A
 		for name in param.names {
 			if poly, ok := name.derived.(^ast.Poly_Type); ok {
 				str := get_ast_node_string(poly.type, file.src)
-				store_local(ast_context, name, param.type, name.pos.offset, str, false, false, {.PolyType}, "", false)
+				store_local(ast_context, name, param.type, int(name.pos.offset), str, false, false, {.PolyType}, "", false)
 			}
 		}
 		ast.walk(&visitor, param.type)
@@ -1391,7 +1391,7 @@ get_function_locals :: proc(
 
 	for function in document_position.functions {
 		ast_context.non_mutable_only = true
-		document_position.position = function.end.offset
+		document_position.position = int(function.end.offset)
 		get_locals_stmt(file, function.body, ast_context, document_position)
 	}
 
