@@ -2,6 +2,7 @@ package server
 
 import "core:fmt"
 import "core:odin/ast"
+import "core:odin/tokenizer"
 import "core:strings"
 
 
@@ -190,7 +191,7 @@ get_objc_block_capture_type :: proc(ast_context: ^AstContext, expr: ^ast.Expr) -
 	if symbol.type_expr != nil {
 		return node_to_string(symbol.type_expr)
 	}
-	type_expr := symbol_to_expr(symbol, expr.pos.file, context.temp_allocator)
+	type_expr := symbol_to_expr(symbol, tokenizer.file_path(expr.pos.file), context.temp_allocator)
 	if type_expr == nil {
 		return ""
 	}

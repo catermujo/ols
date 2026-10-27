@@ -74,7 +74,7 @@ find_if_stmt_in_node :: proc(node: ^ast.Node, position: common.AbsolutePosition,
 		return nil
 	}
 
-	if !(node.pos.offset <= position && position <= node.end.offset) {
+	if !(int(node.pos.offset) <= position && position <= int(node.end.offset)) {
 		return nil
 	}
 
@@ -180,7 +180,7 @@ find_if_stmt_in_node :: proc(node: ^ast.Node, position: common.AbsolutePosition,
 generate_inverted_if :: proc(document: ^Document, if_stmt: ^ast.If_Stmt) -> (string, bool) {
 	src := document.ast.src
 
-	indent := get_line_indentation(src, if_stmt.pos.offset)
+	indent := get_line_indentation(src, int(if_stmt.pos.offset))
 
 	sb := strings.builder_make(context.temp_allocator)
 
@@ -269,7 +269,7 @@ get_block_body_text :: proc(src: string, stmt: ^ast.Stmt, base_indent: string) -
 			if s == nil {
 				continue
 			}
-			stmt_indent := get_line_indentation(src, s.pos.offset)
+			stmt_indent := get_line_indentation(src, int(s.pos.offset))
 			stmt_text := src[s.pos.offset:s.end.offset]
 			strings.write_string(&sb, stmt_indent)
 			strings.write_string(&sb, stmt_text)
@@ -293,7 +293,7 @@ get_block_body_text :: proc(src: string, stmt: ^ast.Stmt, base_indent: string) -
 
 // For else-if chains, we don't invert them, just preserve
 generate_inverted_if_for_else :: proc(src: string, if_stmt: ^ast.If_Stmt, base_indent: string) -> (string, bool) {
-	stmt_indent := get_line_indentation(src, if_stmt.pos.offset)
+	stmt_indent := get_line_indentation(src, int(if_stmt.pos.offset))
 	stmt_text := src[if_stmt.pos.offset:if_stmt.end.offset]
 	return fmt.tprintf("%s%s\n", stmt_indent, stmt_text), true
 }

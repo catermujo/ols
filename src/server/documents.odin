@@ -436,10 +436,10 @@ current_errors: [dynamic]ParserError
 
 parser_error_handler :: proc(pos: tokenizer.Pos, msg: string, args: ..any) {
 	error := ParserError {
-		line    = pos.line,
-		column  = pos.column,
-		file    = pos.file,
-		offset  = pos.offset,
+		line    = int(pos.line),
+		column  = int(pos.column),
+		file    = tokenizer.file_path(pos.file),
+		offset  = int(pos.offset),
 		message = fmt.tprintf(msg, ..args),
 	}
 	append(&current_errors, error)

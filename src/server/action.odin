@@ -191,7 +191,7 @@ source_organize_imports :: proc(
 	// the insert can never land inside a line that a removal edit deletes. The ast positions are
 	// one indexed, while the lsp positions are zero indexed.
 
-	pkg_line := document.ast.pkg_decl.end.line - 1
+	pkg_line := int(document.ast.pkg_decl.end.line) - 1
 
 	//The line above the first import, so new imports end up at the top of the import block.
 	insert_line := pkg_line
@@ -199,7 +199,7 @@ source_organize_imports :: proc(
 	first_import_line := max(int)
 
 	for imp in document.ast.imports {
-		first_import_line = min(first_import_line, imp.pos.line)
+		first_import_line = min(first_import_line, int(imp.pos.line))
 	}
 
 	if len(document.ast.imports) > 0 {
@@ -216,22 +216,22 @@ source_organize_imports :: proc(
 
 	//Walk past any line that is being removed, the package declaration is never removed.
 	for insert_line > pkg_line {
-		if _, is_removed := removed_lines[insert_line]; !is_removed {
+		if _, is_removed := removed_lines[int(insert_line)]; !is_removed {
 			break
 		}
 
 		insert_line -= 1
 	}
 
-	if col, ok := common.get_last_column(insert_line, document.text); ok {
+	if col, ok := common.get_last_column(int(insert_line), document.text); ok {
 		insert_col = col
 	}
 
 	for imp in used_unimported {
 		import_edit := TextEdit {
 			range = {
-				start = {line = insert_line, character = insert_col},
-				end = {line = insert_line, character = insert_col},
+				start = {line = int(insert_line), character = insert_col},
+				end = {line = int(insert_line), character = insert_col},
 			},
 			newText = fmt.tprintf("\nimport \"%v\"", imp.original),
 		}
@@ -326,8 +326,8 @@ add_missing_imports :: proc(
 						pkg_decl := ast_context.file.pkg_decl
 						import_edit = TextEdit {
 							range = {
-								start = {line = pkg_decl.end.line + 1, character = 0},
-								end = {line = pkg_decl.end.line + 1, character = 0},
+								start = {line = int(pkg_decl.end.line + 1), character = 0},
+								end = {line = int(pkg_decl.end.line + 1), character = 0},
 							},
 							newText = fmt.tprintf("import \"%v:%v\"\n", collection, pkg),
 						}

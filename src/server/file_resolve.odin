@@ -136,9 +136,9 @@ resolve_entire_file_for_references :: proc(
 
 	previous_end := 0
 	for decl in document.ast.decls {
-		end := min(decl.end.offset + 1, len(document.ast.src))
+		end := min(int(decl.end.offset) + 1, len(document.ast.src))
 		start := max(0, min(previous_end, end))
-		previous_end = max(previous_end, decl.end.offset)
+		previous_end = max(previous_end, int(decl.end.offset))
 		if target_name != "" && !strings.contains(document.ast.src[start:end], target_name) {
 			continue
 		}
@@ -213,7 +213,7 @@ local_scope :: proc(data: ^FileResolveData, stmt: ^ast.Stmt) #scope_exit(.implic
 		return
 	}
 
-	data.position_context.position = stmt.end.offset
+	data.position_context.position = int(stmt.end.offset)
 	data.position_context.nested_position = data.position_context.position
 
 	data.ast_context.non_mutable_only = true
@@ -324,7 +324,7 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 	case ^ast.Implicit_Selector_Expr:
 		data.position_context.implicit = true
 		data.position_context.implicit_selector_expr = n
-		data.position_context.position = n.pos.offset
+		data.position_context.position = int(n.pos.offset)
 		if data.target_name == "" || n.field.name == data.target_name {
 			if symbol, ok := resolve_location_implicit_selector(data.ast_context, data.position_context, n); ok {
 				data.symbols[cast(uintptr)node] = SymbolAndNode {
@@ -400,7 +400,7 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 			}
 			resolve_node(n.value, data)
 		} else if data.flag != .None && data.position_context.comp_lit != nil {
-			data.position_context.position = n.pos.offset
+			data.position_context.position = int(n.pos.offset)
 
 			if symbol, ok := resolve_location_comp_lit_field(data.ast_context, data.position_context); ok {
 				data.symbols[cast(uintptr)node] = SymbolAndNode {
@@ -551,7 +551,7 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 		data.ast_context.call = old_call
 
 		for arg in n.args {
-			data.position_context.position = arg.pos.offset
+			data.position_context.position = int(arg.pos.offset)
 			data.position_context.call_arg = arg
 			resolve_node(arg, data)
 		}
@@ -698,7 +698,7 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 						symbol = Symbol {
 							range = common.get_token_range(name, string(data.document.text)),
 							uri = strings.clone(
-								common.create_uri(field.pos.file, data.ast_context.allocator).uri,
+								common.create_uri(tokenizer.file_path(field.pos.file), data.ast_context.allocator).uri,
 								data.ast_context.allocator,
 							),
 						},
@@ -725,7 +725,7 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 					symbol = Symbol {
 						range = common.get_token_range(field, string(data.document.text)),
 						uri = strings.clone(
-							common.create_uri(field.pos.file, data.ast_context.allocator).uri,
+							common.create_uri(tokenizer.file_path(field.pos.file), data.ast_context.allocator).uri,
 							data.ast_context.allocator,
 						),
 					},
@@ -739,7 +739,7 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 								name = ident.name,
 								range = common.get_token_range(ident, string(data.document.text)),
 								uri = strings.clone(
-									common.create_uri(field.pos.file, data.ast_context.allocator).uri,
+									common.create_uri(tokenizer.file_path(field.pos.file), data.ast_context.allocator).uri,
 									data.ast_context.allocator,
 								),
 							},
@@ -751,7 +751,7 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 								name = "binary",
 								range = common.get_token_range(binary, string(data.document.text)),
 								uri = strings.clone(
-									common.create_uri(field.pos.file, data.ast_context.allocator).uri,
+									common.create_uri(tokenizer.file_path(field.pos.file), data.ast_context.allocator).uri,
 									data.ast_context.allocator,
 								),
 							},
@@ -789,7 +789,7 @@ resolve_node :: proc(node: ^ast.Node, data: ^FileResolveData) {
 				symbol = Symbol {
 					range = common.get_token_range(n.name, string(data.document.text)),
 					uri = strings.clone(
-						common.create_uri(n.pos.file, data.ast_context.allocator).uri,
+						common.create_uri(tokenizer.file_path(n.pos.file), data.ast_context.allocator).uri,
 						data.ast_context.allocator,
 					),
 				},

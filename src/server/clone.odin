@@ -96,18 +96,6 @@ clone_node :: proc(node: ^ast.Node, allocator: mem.Allocator, unique_strings: ^m
 	res_ptr_any.data = &res
 	res_ptr_any.id = ti.id
 
-	if unique_strings != nil && node.pos.file != "" {
-		res.pos.file = get_index_unique_string(unique_strings, allocator, node.pos.file)
-	} else {
-		res.pos.file = node.pos.file
-	}
-
-	if unique_strings != nil && node.end.file != "" {
-		res.end.file = get_index_unique_string(unique_strings, allocator, node.end.file)
-	} else {
-		res.end.file = node.end.file
-	}
-
 	reflect.set_union_value(res.derived, res_ptr_any)
 
 	// NOTE: These are not needed as we don't actually use `derived_expr` or `derived_stmt` in the codebase
@@ -315,7 +303,7 @@ clone_node :: proc(node: ^ast.Node, allocator: mem.Allocator, unique_strings: ^m
 	case ^ast.Comment_Group:
 		list := make([dynamic]tokenizer.Token, 0, len(r.list), allocator)
 		for t in r.list {
-			append(&list, tokenizer.Token{text = strings.clone(t.text, allocator), kind = t.kind, pos = tokenizer.Pos{file = strings.clone(t.pos.file, allocator), offset = t.pos.offset, line = t.pos.line, column = t.pos.column}})
+			append(&list, tokenizer.Token{text = strings.clone(t.text, allocator), kind = t.kind, pos = t.pos})
 		}
 		r.list = list[:]
 	case ^ast.Auto_Cast:

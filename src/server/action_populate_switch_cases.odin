@@ -23,7 +23,7 @@ get_block_original_text :: proc(block: []^ast.Stmt, document_text: string) -> st
 	if len(block) == 0 {
 		return ""
 	}
-	start := get_line_start_offset(document_text, block[0].pos.offset)
+	start := get_line_start_offset(document_text, int(block[0].pos.offset))
 	end := block[max(0, len(block) - 1)].end.offset
 	return string(document_text[start:end])
 }
@@ -69,7 +69,7 @@ get_switch_cases_info :: proc(
 	if !found_switch_block {
 		return {}, false
 	}
-	switch_indentation := get_line_indentation(ast_context.file.src, switch_block.pos.offset)
+	switch_indentation := get_line_indentation(ast_context.file.src, int(switch_block.pos.offset))
 	existing_cases := make(map[string]struct{}, context.temp_allocator)
 
 

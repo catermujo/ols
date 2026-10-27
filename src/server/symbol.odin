@@ -404,7 +404,7 @@ to_symbol_struct_value :: proc(b: SymbolStructValueBuilder) -> SymbolStructValue
 }
 
 get_node_range_for_ast_context :: proc(ast_context: ^AstContext, node: ast.Node) -> common.Range {
-	if node.pos.file == ast_context.file.fullpath {
+	if tokenizer.file_path(node.pos.file) == ast_context.file.fullpath {
 		return common.get_token_range(node, ast_context.file.src)
 	}
 
@@ -414,8 +414,8 @@ get_node_range_for_ast_context :: proc(ast_context: ^AstContext, node: ast.Node)
 	end_character := max(node.end.column - 1, start_character)
 
 	return {
-		start = {line = start_line, character = start_character},
-		end = {line = end_line, character = end_character},
+		start = {line = int(start_line), character = int(start_character)},
+		end = {line = int(end_line), character = int(end_character)},
 	}
 }
 
@@ -737,7 +737,7 @@ expand_objc :: proc(ast_context: ^AstContext, b: ^SymbolStructValueBuilder) {
 
 			_objc_function: for function, i in obj_struct.functions {
 				pos := tokenizer.Pos {
-					file = function.fullpath,
+					file = tokenizer.file_id(function.fullpath),
 				}
 
 				base := new_type(ast.Ident, pos, pos, context.temp_allocator)
@@ -1036,12 +1036,10 @@ symbol_kind_to_type :: proc(type: SymbolType) -> SymbolKind {
 symbol_to_expr :: proc(symbol: Symbol, file: string, allocator := context.temp_allocator) -> ^ast.Expr {
 
 	pos := tokenizer.Pos {
-		file = file,
+		file = tokenizer.file_id(file),
 	}
 
-	end := tokenizer.Pos {
-		file = file,
-	}
+	end := pos
 
 	#partial switch v in symbol.value {
 	case SymbolDynamicArrayValue:

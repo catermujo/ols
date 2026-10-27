@@ -64,7 +64,7 @@ get_completion_list :: proc(
 		// Check only when the import fullpath length is > 1, to allow
 		// completion of modules when the initial '"' quote is entered.
 		if len(position_context.import_stmt.fullpath) > 1 &&
-		   position_context.position == position_context.import_stmt.end.offset &&
+		   position_context.position == int(position_context.import_stmt.end.offset) &&
 		   completion_context.triggerCharacter == "\"" {
 			// The completion was called for an import statement where the
 			// cursor is on the ending quote, so abort early to prevent
@@ -849,7 +849,7 @@ is_in_attribute :: proc(position_context: ^DocumentPositionContext) -> bool {
 
 position_in_comment :: proc(file: ast.File, position: common.AbsolutePosition) -> bool {
 	for group in file.comments {
-		if group.pos.offset <= position && position <= group.end.offset {
+		if int(group.pos.offset) <= position && position <= int(group.end.offset) {
 			return true
 		}
 	}
@@ -2098,7 +2098,7 @@ get_identifier_completion :: proc(
 
 			ast_context.current_package = ast_context.document_package
 
-			ident := new_type(ast.Ident, {offset = local_offset}, {offset = local_offset}, context.temp_allocator)
+			ident := new_type(ast.Ident, {offset = i32(local_offset)}, {offset = i32(local_offset)}, context.temp_allocator)
 			ident.name = k
 
 			if symbol, ok := resolve_type_identifier(ast_context, ident^); ok {
@@ -2197,7 +2197,7 @@ get_package_completion :: proc(
 			absolute_path = config.collections[c]
 		}
 	} else {
-		import_file_dir := filepath.dir(position_context.import_stmt.pos.file)
+		import_file_dir := filepath.dir(tokenizer.file_path(position_context.import_stmt.pos.file))
 		import_dir := filepath.dir(without_quotes)
 		absolute_path, _ = filepath.join(elems = {import_file_dir, import_dir}, allocator = context.temp_allocator)
 	}
@@ -2385,8 +2385,8 @@ get_core_insert_package_if_non_existent :: proc(ast_context: ^AstContext, pkg: s
 	return {
 			newText = strings.to_string(builder),
 			range = {
-				start = {line = ast_context.file.pkg_decl.end.line + 1, character = 0},
-				end = {line = ast_context.file.pkg_decl.end.line + 1, character = 0},
+				start = {line = int(ast_context.file.pkg_decl.end.line + 1), character = 0},
+				end = {line = int(ast_context.file.pkg_decl.end.line + 1), character = 0},
 			},
 		},
 		true
@@ -2410,16 +2410,16 @@ find_most_bottom_line_number :: proc(ast_context: ^AstContext) -> (int, bool) {
 	most_bottom_line := 0
 	is_import := false
 	for decl in ast_context.file.decls {
-		most_bottom_line = max(decl.end.line, most_bottom_line)
+		most_bottom_line = max(int(decl.end.line), most_bottom_line)
 	}
 
 	for comment_node in ast_context.file.comments {
-		most_bottom_line = max(comment_node.end.line, most_bottom_line)
+		most_bottom_line = max(int(comment_node.end.line), most_bottom_line)
 	}
 
 	for import_node in ast_context.file.imports {
-		if import_node.end.line >= most_bottom_line {
-			most_bottom_line = import_node.end.line
+		if int(import_node.end.line) >= most_bottom_line {
+			most_bottom_line = int(import_node.end.line)
 			is_import = true
 		}
 	}
@@ -2468,8 +2468,8 @@ append_non_imported_packages :: proc(
 				} else {
 					import_edit = TextEdit {
 						range = {
-							start = {line = pkg_decl.end.line + 1, character = 0},
-							end = {line = pkg_decl.end.line + 1, character = 0},
+							start = {line = int(pkg_decl.end.line + 1), character = 0},
+							end = {line = int(pkg_decl.end.line + 1), character = 0},
 						},
 						newText = fmt.tprintf("import \"%v:%v\"\n", collection, pkg),
 					}

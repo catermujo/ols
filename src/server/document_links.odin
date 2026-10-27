@@ -43,8 +43,8 @@ get_document_links :: proc(document: ^Document) -> ([]DocumentLink, bool) {
 				line = imp.relpath.pos.line,
 			},
 			end = {
-				offset = imp.relpath.pos.offset + len(imp.relpath.text) - 1,
-				column = imp.relpath.pos.column + len(imp.relpath.text) - 1,
+				offset = imp.relpath.pos.offset + i32(len(imp.relpath.text)) - 1,
+				column = imp.relpath.pos.column + i32(len(imp.relpath.text)) - 1,
 				line = imp.relpath.pos.line,
 			},
 		}

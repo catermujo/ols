@@ -565,12 +565,12 @@ get_document_position_dynamic_array :: proc(array: $A/[dynamic]^$T, position_con
 }
 
 position_in_node :: proc(node: ^ast.Node, position: common.AbsolutePosition) -> bool {
-	return node != nil && node.pos.offset <= position && position <= node.end.offset
+	return node != nil && int(node.pos.offset) <= position && position <= int(node.end.offset)
 }
 
 position_in_exprs :: proc(nodes: []^ast.Expr, position: common.AbsolutePosition) -> bool {
 	for node in nodes {
-		if node != nil && node.pos.offset <= position && position <= node.end.offset {
+		if node != nil && int(node.pos.offset) <= position && position <= int(node.end.offset) {
 			return true
 		}
 	}
@@ -822,7 +822,7 @@ get_document_position_node :: proc(node: ^ast.Node, position_context: ^DocumentP
 		get_document_position(n.attributes, position_context)
 
 		for name in n.names {
-			if position_in_node(name, position_context.position) && n.end.line - 1 == position_context.line {
+			if position_in_node(name, position_context.position) && int(n.end.line) - 1 == position_context.line {
 				position_context.abort_completion = true
 				break
 			}

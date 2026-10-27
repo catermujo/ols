@@ -436,7 +436,7 @@ collect_value_decl :: proc(
 	if !is_value_decl {
 		return
 	}
-	comment, _ := get_file_comment(file, value_decl.pos.line)
+	comment, _ := get_file_comment(file, int(value_decl.pos.line))
 	attributes := merge_attributes(value_decl.attributes[:], foreign_attrs)
 
 	global_expr := GlobalExpr {
@@ -637,8 +637,8 @@ get_ast_node_string :: proc(node: ^ast.Node, src: string) -> string {
 	return strings.trim_prefix(src[node.pos.offset:node.end.offset], "$")
 }
 get_ast_node_string_safe :: proc(node: ^ast.Node, src: string) -> (str: string, ok: bool) #optional_ok {
-	if node.pos.offset >= len(src) do return
-	if node.end.offset >= len(src) do return
+	if int(node.pos.offset) >= len(src) do return
+	if int(node.end.offset) >= len(src) do return
 	return get_ast_node_string(node, src), true
 }
 
@@ -730,7 +730,6 @@ free_ast_comment :: proc(a: ^ast.Comment_Group, allocator: mem.Allocator) {
 	}
 	for t in a.list {
 		delete(t.text, allocator)
-		delete(t.pos.file, allocator)
 	}
 	delete(a.list, allocator)
 	free(a, allocator)
@@ -1569,7 +1568,7 @@ get_file_comment :: proc(
 	// TODO: linear scan might be a bit slow for files with lots of comments?
 	for i := start_index; i < len(file.comments); i += 1 {
 		c := file.comments[i]
-		if c.pos.line == line {
+		if int(c.pos.line) == line {
 			for item, j in c.list {
 				comment := new_type(ast.Comment_Group, item.pos, parser.end_pos(item), allocator)
 				if j == len(c.list) - 1 {
@@ -1598,11 +1597,11 @@ get_file_doc :: proc(
 ) {
 	for i := start_index; i < len(file.comments); i += 1 {
 		c := file.comments[i]
-		if c.end.line == end_line {
+		if int(c.end.line) == end_line {
 			docs := new_type(ast.Comment_Group, c.pos, c.end, allocator)
 			if start_line != -1 {
 				for item, j in c.list {
-					if item.pos.line >= start_line {
+					if int(item.pos.line) >= start_line {
 						docs.list = c.list[j:]
 						return docs, i
 					}
@@ -1635,16 +1634,16 @@ get_field_docs_and_comments :: proc(
 		doc: ^ast.Comment_Group
 		comment: ^ast.Comment_Group
 
-		if n.pos.line == prev_line {
+		if int(n.pos.line) == prev_line {
 			// if we're on the same line, just add the previous docs and comments
 			doc = docs[i - 1]
 			comment = comments[i - 1]
 		} else {
 			// Check to see if there's space below the previous field for a comment
-			if n.pos.line - 1 > prev_line {
+			if int(n.pos.line) - 1 > prev_line {
 				doc, last_doc = get_file_doc(
 					file,
-					n.pos.line - 1,
+					int(n.pos.line - 1),
 					start_line = prev_line + 1,
 					start_index = last_doc + 1,
 					allocator = allocator,
@@ -1653,7 +1652,7 @@ get_field_docs_and_comments :: proc(
 
 			comment, last_comment = get_file_comment(
 				file,
-				n.pos.line,
+				int(n.pos.line),
 				start_index = last_comment + 1,
 				allocator = allocator,
 			)
@@ -1661,7 +1660,7 @@ get_field_docs_and_comments :: proc(
 
 		append(&docs, doc)
 		append(&comments, comment)
-		prev_line = n.pos.line
+		prev_line = int(n.pos.line)
 	}
 
 

@@ -991,7 +991,7 @@ resolve_references :: proc(
 			config,
 		)
 		if reference_symbols_match(resolved_symbol, search_symbol) {
-			node_uri := common.create_uri(v.node.pos.file, ast_context.allocator)
+			node_uri := common.create_uri(tokenizer.file_path(v.node.pos.file), ast_context.allocator)
 			range := common.get_token_range(v.node^, ast_context.file.src)
 			if reference_location_in_list(node_uri.uri, range, alias_definition_locations) {
 				continue
@@ -1167,7 +1167,7 @@ resolve_references :: proc(
 					config,
 				)
 				if reference_symbols_match(resolved_symbol, search_symbol) {
-					node_uri := common.create_uri(v.node.pos.file, ast_context.allocator)
+					node_uri := common.create_uri(tokenizer.file_path(v.node.pos.file), ast_context.allocator)
 					range := common.get_token_range(v.node^, string(document.text))
 					if reference_location_in_list(node_uri.uri, range, alias_definition_locations) {
 						continue

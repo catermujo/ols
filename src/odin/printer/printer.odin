@@ -212,7 +212,7 @@ compute_constant_alignment :: proc(p: ^Printer, decls: []^ast.Stmt) {
 			for k := group_start; k < j; k += 1 {
 				kd := cast(^ast.Decl)decls[k]
 				kv := kd.derived.(^ast.Value_Decl)
-				p.constant_alignment[kd.pos.offset] = max_width - get_constant_name_width(kv)
+				p.constant_alignment[int(kd.pos.offset)] = max_width - get_constant_name_width(kv)
 			}
 		}
 
@@ -242,18 +242,18 @@ build_disabled_lines_info :: proc(p: ^Printer) {
 				disable_position = comment.pos
 			} else if found_disable && action == "enable" {
 				begin := disable_position.offset - (comment.pos.column - 1)
-				end := comment.pos.offset + len(comment.text)
+				end := int(comment.pos.offset) + len(comment.text)
 
 				disabled_info := Disabled_Info {
-					start_line = disable_position.line,
-					end_line   = comment.pos.line,
+					start_line = int(disable_position.line),
+					end_line   = int(comment.pos.line),
 					text       = p.src[begin:end],
 					empty      = empty,
-					begin      = begin,
+					begin      = int(begin),
 				}
 
 				for line in disable_position.line ..= comment.pos.line {
-					p.disabled_lines[line] = disabled_info
+					p.disabled_lines[int(line)] = disabled_info
 				}
 
 				found_disable = false
@@ -369,7 +369,7 @@ print_file :: proc(p: ^Printer, file: ^ast.File) -> string {
 				import_group_start = nil
 			}
 
-			if prev_decl != nil && prev_decl.end.line == decl.pos.line && decl.pos.line not_in p.disabled_lines {
+			if prev_decl != nil && prev_decl.end.line == decl.pos.line && int(decl.pos.line) not_in p.disabled_lines {
 				p.document = cons(p.document, break_with("; "))
 			}
 			p.document = cons(p.document, visit_decl(p, decl))
@@ -476,13 +476,13 @@ print_sorted_imports :: proc(p: ^Printer, decls: []^ast.Stmt) {
 	})
 
 	for decl, i in decls {
-		decl.pos.line = start_line + i
-		decl.end.line = start_line + i
+		decl.pos.line = start_line + i32(i)
+		decl.end.line = start_line + i32(i)
 
 		imp := decl.derived.(^ast.Import_Decl)
 		for attr in imp.attributes {
-			attr.pos.line = start_line + i
-			attr.end.line = start_line + i
+			attr.pos.line = start_line + i32(i)
+			attr.end.line = start_line + i32(i)
 		}
 
 		p.document = cons(p.document, visit_decl(p, cast(^ast.Decl)decl))

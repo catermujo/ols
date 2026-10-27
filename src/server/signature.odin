@@ -167,11 +167,11 @@ add_proc_signature :: proc(
 	}
 
 	if call_expr, ok := position_context.call.derived.(^ast.Call_Expr); ok {
-		prev_offset := call_expr.open.offset
+		prev_offset := int(call_expr.open.offset)
 
 		for arg, i in call_expr.args {
 			bad_expr, is_bad_expr := arg.derived.(^ast.Bad_Expr)
-			if !is_bad_expr && arg.pos.offset > position_context.position {
+			if !is_bad_expr && int(arg.pos.offset) > position_context.position {
 				break
 			}
 
@@ -191,7 +191,7 @@ add_proc_signature :: proc(
 			}
 
 			if !is_bad_expr {
-				prev_offset = arg.end.offset
+				prev_offset = int(arg.end.offset)
 				active_parameter += 1
 			}
 		}

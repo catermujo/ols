@@ -2051,7 +2051,7 @@ internal_resolve_type_expression :: proc(ast_context: ^AstContext, node: ^ast.Ex
 		out.type = .Type
 		out.pkg = get_package_from_node(v.node)
 		out.name = ast_context.field_name.name
-		out.uri = common.create_uri(v.pos.file, ast_context.allocator).uri
+		out.uri = common.create_uri(tokenizer.file_path(v.pos.file), ast_context.allocator).uri
 		out.value = SymbolSliceValue {
 			expr = v.expr,
 		}
@@ -2201,7 +2201,7 @@ resolve_call_directive :: proc(ast_context: ^AstContext, call: ^ast.Call_Expr) -
 			return resolve_type_expression(ast_context, call.args[1])
 		}
 	case "location":
-		return lookup("Source_Code_Location", indexer.runtime_package, call.pos.file)
+		return lookup("Source_Code_Location", indexer.runtime_package, tokenizer.file_path(call.pos.file))
 	case "hash", "load_hash":
 		ident := new_type(ast.Ident, call.pos, call.end, ast_context.allocator)
 		ident.name = "int"
@@ -2428,7 +2428,7 @@ resolve_fixed_array_definition_target :: proc(symbol: Symbol, file: string) -> S
 			if selector, ok := indexed.value_expr.derived.(^ast.Selector_Expr); ok && selector.field != nil {
 				if alias, ok := selector.expr.derived.(^ast.Ident); ok {
 					if pkg, ok := indexer.index.collection.packages[symbol.pkg]; ok {
-						if aliases, ok := pkg.import_aliases_by_file[indexed.value_expr.pos.file]; ok {
+						if aliases, ok := pkg.import_aliases_by_file[tokenizer.file_path(indexed.value_expr.pos.file)]; ok {
 							if import_pkg, ok := aliases[alias.name]; ok {
 								if target, ok := lookup(selector.field.name, import_pkg, file); ok {
 									return target
@@ -2550,7 +2550,7 @@ resolve_selector_expression :: proc(ast_context: ^AstContext, node: ^ast.Selecto
 			try_build_package(ast_context.current_package)
 
 			if node.field != nil {
-				field_symbol, ok := lookup(node.field.name, selector.pkg, node.pos.file)
+				field_symbol, ok := lookup(node.field.name, selector.pkg, tokenizer.file_path(node.pos.file))
 				if ok {
 					if pkg_alias_symbol, ok := resolve_field_through_package_alias(
 						ast_context,
@@ -2678,7 +2678,7 @@ resolve_field_access_through_imported_alias :: proc(
 		if strings.compare(imp.base, ident.name) == 0 {
 			try_build_package(ast_context.current_package)
 			if node.field != nil {
-				symbol, ok := lookup(node.field.name, imp.name, node.pos.file)
+				symbol, ok := lookup(node.field.name, imp.name, tokenizer.file_path(node.pos.file))
 				if ok {
 					return resolve_symbol_return(ast_context, symbol)
 				}
@@ -2691,7 +2691,7 @@ resolve_field_access_through_imported_alias :: proc(
 		if _, ok2 := pkg_symbol.value.(SymbolPackageValue); ok2 {
 			try_build_package(ast_context.current_package)
 			if node.field != nil {
-				symbol, ok := lookup(node.field.name, pkg_symbol.pkg, node.pos.file)
+				symbol, ok := lookup(node.field.name, pkg_symbol.pkg, tokenizer.file_path(node.pos.file))
 				if ok {
 					return resolve_symbol_return(ast_context, symbol)
 				}
@@ -2770,7 +2770,7 @@ internal_resolve_type_identifier :: proc(ast_context: ^AstContext, node: ast.Ide
 					name = ident.name,
 					pkg = ast_context.current_package,
 					value = SymbolBasicValue{ident = ident},
-					uri = common.create_uri(ident.pos.file, ast_context.allocator).uri,
+					uri = common.create_uri(tokenizer.file_path(ident.pos.file), ast_context.allocator).uri,
 				},
 				true
 		}
@@ -2784,7 +2784,7 @@ internal_resolve_type_identifier :: proc(ast_context: ^AstContext, node: ast.Ide
 		for u in ast_context.usings {
 			for imp in ast_context.imports {
 				if strings.compare(imp.name, u.pkg_name) == 0 {
-					if symbol, ok := lookup(node.name, imp.name, node.pos.file); ok {
+					if symbol, ok := lookup(node.name, imp.name, tokenizer.file_path(node.pos.file)); ok {
 						return resolve_symbol_return(ast_context, symbol)
 					}
 				}
@@ -2844,24 +2844,24 @@ internal_resolve_type_identifier :: proc(ast_context: ^AstContext, node: ast.Ide
 	is_runtime := strings.contains(ast_context.current_package, "base/runtime")
 
 	if is_runtime {
-		if symbol, ok := lookup(node.name, "$builtin", node.pos.file); ok {
+		if symbol, ok := lookup(node.name, "$builtin", tokenizer.file_path(node.pos.file)); ok {
 			return resolve_symbol_return(ast_context, symbol)
 		}
 	}
 
 	//last option is to check the index
-	if symbol, ok := lookup(node.name, ast_context.current_package, node.pos.file); ok {
+	if symbol, ok := lookup(node.name, ast_context.current_package, tokenizer.file_path(node.pos.file)); ok {
 		return resolve_symbol_return(ast_context, symbol)
 	}
 
 	if !is_runtime {
-		if symbol, ok := lookup(node.name, "$builtin", node.pos.file); ok {
+		if symbol, ok := lookup(node.name, "$builtin", tokenizer.file_path(node.pos.file)); ok {
 			return resolve_symbol_return(ast_context, symbol)
 		}
 	}
 
 	for built in indexer.builtin_packages {
-		if symbol, ok := lookup(node.name, built, node.pos.file); ok {
+		if symbol, ok := lookup(node.name, built, tokenizer.file_path(node.pos.file)); ok {
 			return resolve_symbol_return(ast_context, symbol)
 		}
 	}
@@ -3824,7 +3824,7 @@ resolve_location_identifier :: proc(ast_context: ^AstContext, node: ast.Ident) -
 
 	if local, ok := get_local(ast_context^, node); ok {
 		symbol.range = common.get_token_range(local.lhs, ast_context.file.src)
-		uri := common.create_uri(local.lhs.pos.file, ast_context.allocator)
+		uri := common.create_uri(tokenizer.file_path(local.lhs.pos.file), ast_context.allocator)
 		symbol.pkg = ast_context.document_package
 		symbol.uri = uri.uri
 		symbol.flags |= {.Local}
@@ -3835,7 +3835,7 @@ resolve_location_identifier :: proc(ast_context: ^AstContext, node: ast.Ident) -
 		usings := get_using_packages(ast_context)
 
 		for pkg in usings {
-			if symbol, ok := lookup(node.name, pkg, node.pos.file); ok {
+			if symbol, ok := lookup(node.name, pkg, tokenizer.file_path(node.pos.file)); ok {
 				return symbol, ok
 			}
 		}
@@ -3867,11 +3867,11 @@ resolve_location_identifier :: proc(ast_context: ^AstContext, node: ast.Ident) -
 		}
 	}
 
-	if symbol, ok := lookup(node.name, ast_context.current_package, node.pos.file); ok {
+	if symbol, ok := lookup(node.name, ast_context.current_package, tokenizer.file_path(node.pos.file)); ok {
 		return symbol, ok
 	}
 
-	if symbol, ok := lookup(node.name, "$builtin", node.pos.file); ok {
+	if symbol, ok := lookup(node.name, "$builtin", tokenizer.file_path(node.pos.file)); ok {
 		return symbol, ok
 	}
 
@@ -4148,7 +4148,7 @@ resolve_symbol_selector :: proc(
 		for name, i in v.names {
 			if strings.compare(name, field) == 0 {
 				if v.from_usings[i] != -1 || symbol_struct_value_has_objc_ivar(v, i) {
-					symbol.uri = common.create_uri(v.types[i].pos.file, context.temp_allocator).uri
+					symbol.uri = common.create_uri(tokenizer.file_path(v.types[i].pos.file), context.temp_allocator).uri
 				}
 				symbol.range = v.ranges[i]
 				symbol.type = .Field
@@ -4194,7 +4194,7 @@ resolve_symbol_selector :: proc(
 			return resolved, true
 		}
 		if _, ok := count_swizzle_components(field); ok && symbol.range != {} {
-			return resolve_fixed_array_definition_target(symbol, selector.pos.file), true
+			return resolve_fixed_array_definition_target(symbol, tokenizer.file_path(selector.pos.file)), true
 		}
 		return {}, false
 	case SymbolMapValue:
@@ -4466,7 +4466,7 @@ make_int_basic_value :: proc(
 }
 
 get_package_from_node :: proc(node: ast.Node) -> string {
-	return get_package_from_filepath(node.pos.file)
+	return get_package_from_filepath(tokenizer.file_path(node.pos.file))
 }
 
 get_package_from_filepath :: proc(file_path: string) -> string {
@@ -4554,7 +4554,7 @@ make_symbol_procedure_from_ast :: proc(
 		type  = .Function if !type else .Type_Function,
 		pkg   = pkg,
 		name  = name,
-		uri   = common.create_uri(v.pos.file, ast_context.allocator).uri,
+		uri   = common.create_uri(tokenizer.file_path(v.pos.file), ast_context.allocator).uri,
 	}
 
 	return_types := make([dynamic]^ast.Field, ast_context.allocator)
@@ -4609,7 +4609,7 @@ make_symbol_array_from_ast :: proc(ast_context: ^AstContext, v: ast.Array_Type, 
 		type  = .Type,
 		pkg   = get_package_from_node(v.node),
 		name  = name.name,
-		uri   = common.create_uri(v.pos.file, ast_context.allocator).uri,
+		uri   = common.create_uri(tokenizer.file_path(v.pos.file), ast_context.allocator).uri,
 	}
 
 	if v.len != nil {
@@ -4643,7 +4643,7 @@ make_symbol_dynamic_array_from_ast :: proc(
 		type  = .Type,
 		pkg   = get_package_from_node(v.node),
 		name  = name.name,
-		uri   = common.create_uri(v.pos.file, ast_context.allocator).uri,
+		uri   = common.create_uri(tokenizer.file_path(v.pos.file), ast_context.allocator).uri,
 	}
 
 	symbol.value = SymbolDynamicArrayValue {
@@ -4668,7 +4668,7 @@ make_symbol_fixed_cap_dynamic_array_from_ast :: proc(
 		type  = .Type,
 		pkg   = get_package_from_node(v.node),
 		name  = name.name,
-		uri   = common.create_uri(v.pos.file, ast_context.allocator).uri,
+		uri   = common.create_uri(tokenizer.file_path(v.pos.file), ast_context.allocator).uri,
 	}
 
 	symbol.value = SymbolDynamicArrayValue {
@@ -4690,7 +4690,7 @@ make_symbol_matrix_from_ast :: proc(ast_context: ^AstContext, v: ast.Matrix_Type
 		type  = .Type,
 		pkg   = get_package_from_node(v.node),
 		name  = name.name,
-		uri   = common.create_uri(v.pos.file, ast_context.allocator).uri,
+		uri   = common.create_uri(tokenizer.file_path(v.pos.file), ast_context.allocator).uri,
 	}
 
 	symbol.value = SymbolMatrixValue {
@@ -4713,7 +4713,7 @@ make_symbol_multi_pointer_from_ast :: proc(
 		type  = .Type,
 		pkg   = get_package_from_node(v.node),
 		name  = name.name,
-		uri   = common.create_uri(v.pos.file, ast_context.allocator).uri,
+		uri   = common.create_uri(tokenizer.file_path(v.pos.file), ast_context.allocator).uri,
 	}
 
 	symbol.value = SymbolMultiPointerValue {
@@ -4729,7 +4729,7 @@ make_symbol_map_from_ast :: proc(ast_context: ^AstContext, v: ast.Map_Type, name
 		type  = .Type,
 		pkg   = get_package_from_node(v.node),
 		name  = name.name,
-		uri   = common.create_uri(v.pos.file, ast_context.allocator).uri,
+		uri   = common.create_uri(tokenizer.file_path(v.pos.file), ast_context.allocator).uri,
 	}
 
 	symbol.value = SymbolMapValue {
@@ -4779,7 +4779,7 @@ make_symbol_union_from_ast :: proc(
 		type  = .Union,
 		pkg   = get_package_from_node(v.node),
 		name  = name,
-		uri   = common.create_uri(v.pos.file, ast_context.allocator).uri,
+		uri   = common.create_uri(tokenizer.file_path(v.pos.file), ast_context.allocator).uri,
 	}
 
 	if inlined {
@@ -4827,7 +4827,7 @@ make_symbol_enum_from_ast :: proc(
 		type  = .Enum,
 		name  = name,
 		pkg   = get_package_from_node(v.node),
-		uri   = common.create_uri(v.pos.file, ast_context.allocator).uri,
+		uri   = common.create_uri(tokenizer.file_path(v.pos.file), ast_context.allocator).uri,
 	}
 
 	if inlined {
@@ -4917,7 +4917,7 @@ make_symbol_bitset_from_ast :: proc(
 		type  = .Enum,
 		name  = ident.name,
 		pkg   = get_package_from_node(v.node),
-		uri   = common.create_uri(v.pos.file, ast_context.allocator).uri,
+		uri   = common.create_uri(tokenizer.file_path(v.pos.file), ast_context.allocator).uri,
 	}
 
 	if inlined {
@@ -4946,7 +4946,7 @@ make_symbol_struct_from_ast :: proc(
 		type  = .Struct,
 		pkg   = get_package_from_node(v.node),
 		name  = name,
-		uri   = common.create_uri(v.pos.file, ast_context.allocator).uri,
+		uri   = common.create_uri(tokenizer.file_path(v.pos.file), ast_context.allocator).uri,
 	}
 
 	if inlined {
@@ -4971,7 +4971,7 @@ make_symbol_bit_field_from_ast :: proc(
 		type  = .Struct,
 		pkg   = get_package_from_node(v.node),
 		name  = name,
-		uri   = common.create_uri(v.pos.file, ast_context.allocator).uri,
+		uri   = common.create_uri(tokenizer.file_path(v.pos.file), ast_context.allocator).uri,
 	}
 
 	if inlined {
@@ -5193,7 +5193,7 @@ position_in_proc_decl :: proc(position_context: ^DocumentPositionContext) -> boo
 }
 
 is_lhs_comp_lit :: proc(position_context: ^DocumentPositionContext) -> bool {
-	if position_context.position <= position_context.comp_lit.open.offset {
+	if position_context.position <= int(position_context.comp_lit.open.offset) {
 		return false
 	}
 

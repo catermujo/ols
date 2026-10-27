@@ -104,7 +104,7 @@ get_definition_alias_symbol :: proc(
 			result.name = name
 			result.pkg = pkg
 			result.range = common.get_token_range(global.name_expr, ast_context.file.src)
-			result.uri = common.create_uri(global.name_expr.pos.file, ast_context.allocator).uri
+			result.uri = common.create_uri(tokenizer.file_path(global.name_expr.pos.file), ast_context.allocator).uri
 			result.type_expr = global.type_expr
 			result.value_expr = global.value_expr
 			if global.value_expr != nil {
@@ -148,13 +148,13 @@ get_definition_alias_target :: proc(ast_context: ^AstContext, symbol: Symbol) ->
 		if base, ok := expr.expr.derived.(^ast.Ident); ok {
 			import_pkg := base.name
 			if pkg, ok := indexer.index.collection.packages[symbol.pkg]; ok {
-				if aliases, ok := pkg.import_aliases_by_file[expr.pos.file]; ok {
+				if aliases, ok := pkg.import_aliases_by_file[tokenizer.file_path(expr.pos.file)]; ok {
 					if resolved_pkg, ok := aliases[base.name]; ok {
 						import_pkg = resolved_pkg
 					}
 				}
 			}
-			if target, ok := lookup(field.name, import_pkg, expr.pos.file); ok {
+			if target, ok := lookup(field.name, import_pkg, tokenizer.file_path(expr.pos.file)); ok {
 				return target, true
 			}
 		}
@@ -461,7 +461,7 @@ try_resolve_proc_group_overload :: proc(
 		if resolved.name != "" {
 			if global, ok := ast_context.globals[resolved.name]; ok {
 				resolved.range = common.get_token_range(global.name_expr, ast_context.file.src)
-				resolved.uri = common.create_uri(global.name_expr.pos.file, ast_context.allocator).uri
+				resolved.uri = common.create_uri(tokenizer.file_path(global.name_expr.pos.file), ast_context.allocator).uri
 			} else if indexed_symbol, ok := lookup(resolved.name, resolved.pkg, ast_context.fullpath); ok {
 				resolved.range = indexed_symbol.range
 				resolved.uri = indexed_symbol.uri

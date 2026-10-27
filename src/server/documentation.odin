@@ -778,8 +778,8 @@ write_node :: proc(
 		start_line := -1
 		for elem in n.elems {
 			if start_line == -1 {
-				start_line = elem.pos.line
-			} else if start_line != elem.pos.line {
+				start_line = int(elem.pos.line)
+			} else if start_line != int(elem.pos.line) {
 				same_line = false
 				break
 			}

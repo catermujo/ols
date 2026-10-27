@@ -27,7 +27,7 @@ comment_before_or_in_line :: proc(p: ^Printer, line: int) -> bool {
 
 	comment := p.comments[p.latest_comment_index]
 
-	return comment.pos.line < line
+	return int(comment.pos.line) < line
 }
 
 @(private)
@@ -66,7 +66,7 @@ move_line :: proc(p: ^Printer, pos: tokenizer.Pos) -> ^Document {
 
 @(private)
 move_line_limit :: proc(p: ^Printer, pos: tokenizer.Pos, limit: int) -> (^Document, bool) {
-	lines := pos.line - p.source_position.line
+	lines := int(pos.line - p.source_position.line)
 
 	if lines < 0 {
 		return empty(), false
@@ -86,22 +86,22 @@ visit_comment :: proc(p: ^Printer, comment: tokenizer.Token) -> (int, ^Document)
 		return 0, document
 	}
 
-	newlines_before_comment := comment.pos.line - p.source_position.line
+	newlines_before_comment := int(comment.pos.line - p.source_position.line)
 	newlines_before_comment_limited := min(newlines_before_comment, p.config.newline_limit + 1)
 
 	document = cons(document, newline(newlines_before_comment_limited))
 
 	if comment.text[:2] != "/*" {
-		if info, is_disabled := p.disabled_lines[comment.pos.line]; is_disabled {
+		if info, is_disabled := p.disabled_lines[int(comment.pos.line)]; is_disabled {
 			p.source_position = comment.pos
-			if info.start_line == comment.pos.line && info.empty {
+			if info.start_line == int(comment.pos.line) && info.empty {
 				return info.end_line - info.start_line, cons(escape_nest(document), text(info.text))
 			}
 			return 1, empty()
 		} else if comment.pos.line == p.source_position.line && p.source_position.column != 1 {
 			p.source_position = comment.pos
-			if comment_option, exist := p.comments_option[comment.pos.line]; exist && comment_option == .Indent {
-				delete_key(&p.comments_option, comment.pos.line)
+			if comment_option, exist := p.comments_option[int(comment.pos.line)]; exist && comment_option == .Indent {
+				delete_key(&p.comments_option, int(comment.pos.line))
 				return newlines_before_comment, cons_with_nopl(
 					document,
 					cons(text(p.indentation), line_suffix(comment.text, alignable = true)),
@@ -116,17 +116,17 @@ visit_comment :: proc(p: ^Printer, comment: tokenizer.Token) -> (int, ^Document)
 	} else {
 		newlines := strings.count(comment.text, "\n")
 
-		if comment.pos.line in p.disabled_lines {
+		if int(comment.pos.line) in p.disabled_lines {
 			p.source_position = comment.pos
-			p.source_position.line += newlines
+			p.source_position.line += i32(newlines)
 			return 1, empty()
 		} else if comment.pos.line == p.source_position.line && p.source_position.column != 1 {
 			p.source_position = comment.pos
-			p.source_position.line += newlines
+			p.source_position.line += i32(newlines)
 			return newlines_before_comment + newlines, cons_with_opl(document, text(comment.text))
 		} else {
 			p.source_position = comment.pos
-			p.source_position.line += newlines
+			p.source_position.line += i32(newlines)
 			return newlines_before_comment + newlines, cons(document, text(comment.text))
 		}
 
@@ -156,17 +156,17 @@ visit_comments :: proc(p: ^Printer, pos: tokenizer.Pos) -> (^Document, int) {
 
 @(private)
 visit_disabled :: proc(p: ^Printer, node: ^ast.Node) -> ^Document {
-	if node.pos.line not_in p.disabled_lines {
+	if int(node.pos.line) not_in p.disabled_lines {
 		return empty()
 	}
 
-	disabled_info := p.disabled_lines[node.pos.line]
+	disabled_info := p.disabled_lines[int(node.pos.line)]
 
 	if disabled_info.text == "" {
 		return empty()
 	}
 
-	if p.disabled_until_line > node.pos.line {
+	if p.disabled_until_line > int(node.pos.line) {
 		return empty()
 	}
 
@@ -186,12 +186,12 @@ visit_disabled :: proc(p: ^Printer, node: ^ast.Node) -> ^Document {
 
 	p.disabled_until_line = disabled_info.end_line
 	p.source_position = node.end
-	p.source_position.line = disabled_info.end_line
+	p.source_position.line = i32(disabled_info.end_line)
 
 	// Attributes are part of the declaration but sit above the directive, so they fall outside
 	// `text` and outside ordinary visiting. Dropping them silently un-privatises a declaration.
 	prefix := empty()
-	if node_pos.offset < disabled_info.begin {
+	if int(node_pos.offset) < disabled_info.begin {
 		prefix = text(p.src[node_pos.offset:disabled_info.begin])
 	}
 
@@ -201,7 +201,7 @@ visit_disabled :: proc(p: ^Printer, node: ^ast.Node) -> ^Document {
 		// we need to handle the rest of the comment group
 		comment_group := p.comments[p.latest_comment_index]
 		for comment in comment_group.list {
-			if comment.pos.line <= disabled_info.end_line {
+			if int(comment.pos.line) <= disabled_info.end_line {
 				continue
 			}
 			newlined, tmp_document := visit_comment(p, comment)
@@ -219,7 +219,7 @@ visit_decl :: proc(p: ^Printer, decl: ^ast.Decl, called_in_stmt := false) -> ^Do
 		return empty()
 	}
 
-	if decl.pos.line in p.disabled_lines {
+	if int(decl.pos.line) in p.disabled_lines {
 		return visit_disabled(p, decl)
 	}
 
@@ -327,14 +327,14 @@ visit_decl :: proc(p: ^Printer, decl: ^ast.Decl, called_in_stmt := false) -> ^Do
 		if v.type != nil {
 			// Typed constant/variable: pad before the colon so it lines up
 			type_colon := text(" :" if p.config.spaces_around_colons else ":")
-			padding := p.constant_alignment[decl.pos.offset]
+			padding := p.constant_alignment[int(decl.pos.offset)]
 			lhs = cons(lhs, repeat_space(padding), type_colon)
 			lhs = cons_with_nopl(lhs, visit_expr(p, v.type))
 		} else {
 			if !v.is_mutable {
 				// Constant (::): pad before the colons so it lines up
 				double_colon := cons(text(":"), text(":"))
-				padding := p.constant_alignment[decl.pos.offset]
+				padding := p.constant_alignment[int(decl.pos.offset)]
 				lhs = cons_with_nopl(lhs, cons(repeat_space(padding), double_colon))
 			} else {
 				lhs = cons_with_nopl(lhs, text(":"))
@@ -940,7 +940,7 @@ visit_stmt :: proc(
 		return empty()
 	}
 
-	if stmt.pos.line in p.disabled_lines {
+	if int(stmt.pos.line) in p.disabled_lines {
 		return visit_disabled(p, stmt)
 	}
 
@@ -2104,7 +2104,7 @@ visit_matrix_comp_lit :: proc(p: ^Printer, matrix_type: ^ast.Matrix_Type, comp_l
 @(private)
 visit_begin_brace :: proc(p: ^Printer, begin: tokenizer.Pos, type: Block_Type) -> ^Document {
 	set_source_position(p, begin)
-	set_comment_option(p, begin.line, .Indent)
+	set_comment_option(p, int(begin.line), .Indent)
 
 	newline_braced := p.config.brace_style == .Allman
 	newline_braced |= p.config.brace_style == .K_And_R && type == .Proc
@@ -2140,7 +2140,7 @@ visit_block_stmts :: proc(p: ^Printer, stmts: []^ast.Stmt) -> ^Document {
 
 	for stmt, i in stmts {
 		last_index := max(0, i - 1)
-		if stmts[last_index].end.line == stmt.pos.line && i != 0 && stmt.pos.line not_in p.disabled_lines {
+		if stmts[last_index].end.line == stmt.pos.line && i != 0 && int(stmt.pos.line) not_in p.disabled_lines {
 			document = group(cons(document, break_with("; ")))
 		}
 
@@ -2185,13 +2185,13 @@ visit_struct_field_list :: proc(p: ^Printer, list: ^ast.Field_List, options := L
 		// A field is neither a Decl nor a Stmt, so it reaches neither place that consults
 		// disabled_lines and the region has to be emitted here. Its text already carries the
 		// source's indentation, hence escape_nest and the trim of the first line.
-		if info, disabled := p.disabled_lines[field.pos.line]; disabled && info.text != "" {
-			if p.disabled_until_line > field.pos.line {
+		if info, disabled := p.disabled_lines[int(field.pos.line)]; disabled && info.text != "" {
+			if p.disabled_until_line > int(field.pos.line) {
 				continue // already emitted by an earlier iteration
 			}
 			p.disabled_until_line = info.end_line
 			p.source_position = field.end
-			p.source_position.line = info.end_line
+			p.source_position.line = i32(info.end_line)
 			document = cons(document, escape_nest(text(strings.trim_left(info.text, " \t"))))
 			if i != len(list.list) - 1 {
 				document = cons(document, newline(1))
