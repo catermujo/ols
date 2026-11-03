@@ -56,7 +56,7 @@ snapshot_directory :: proc(directory: string) -> bool {
 	for match in matches {
 		if !strings.contains(match, ".snapshots") {
 			if os.is_dir(match) {
-				snapshot_directory(match)
+				snapshot_directory(match) or_return
 			}
 		}
 	}

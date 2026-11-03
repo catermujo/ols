@@ -489,6 +489,31 @@ is_values_nestable_assign :: proc(list: []^ast.Expr) -> bool {
 	return false
 }
 
+// A one-line block whose statement breaks prints as `{ return(` ... `) }`, or with a trailing comment as
+// `{ return(` ... `)` newline `/* c */ }`. Treat that padded, hugging layout like the one-line source it came
+// from, or the next format drops the padding.
+@(private)
+is_padded_hugging_block :: proc(p: ^Printer, block: ast.Block_Stmt) -> bool {
+	if block.uses_do || len(block.stmts) == 0 {
+		return false
+	}
+
+	first := block.stmts[0]
+	if first.pos.line != block.open.line || first.pos.offset <= block.open.offset + 1 {
+		return false
+	}
+
+	// The closing brace hugs when padding, not indentation, separates it from code or a comment on its line.
+	before_close := p.src[:block.close.offset]
+	trimmed := strings.trim_right(before_close, " \t")
+	return(
+		len(trimmed) < len(before_close) &&
+		len(trimmed) > 0 &&
+		trimmed[len(trimmed) - 1] != '\n' &&
+		trimmed[len(trimmed) - 1] != '\r' \
+	)
+}
+
 //Should the return stmt list behave like a call expression.
 @(private)
 is_values_return_stmt_callable :: proc(list: []^ast.Expr) -> bool {
@@ -975,7 +1000,7 @@ visit_stmt :: proc(
 		document = cons(document, cons_with_nopl(text("using"), visit_exprs(p, v.list, {.Add_Comma})))
 	case ^ast.Block_Stmt:
 		uses_do := v.uses_do && !p.config.convert_do && !force_braces
-		is_single_line := v.open.line == v.end.line
+		is_single_line := v.open.line == v.end.line || is_padded_hugging_block(p, v^)
 
 		if v.label != nil {
 			document = cons(document, visit_expr(p, v.label), text(":"), break_with_space())
@@ -1820,7 +1845,12 @@ visit_expr :: proc(
 			document = cons(document, text("#force_no_inline"))
 		}
 
-		document = cons_with_nopl(document, visit_proc_type(p, v.type^, v.body != nil, len(v.where_clauses) > 0))
+		// Declarations keep the old layout that breaks an empty parameter list before long results. Elsewhere,
+		// such as composite literal fields, the body breaks instead, so `proc(` newline `)` never helps there.
+		document = cons_with_nopl(
+			document,
+			visit_proc_type(p, v.type^, v.body != nil, len(v.where_clauses) > 0, called_from != .Generic),
+		)
 
 		document = cons_with_nopl(document, visit_where_clauses(p, v.where_clauses))
 
@@ -1834,6 +1864,13 @@ visit_expr :: proc(
 			document = cons_with_nopl(document, group(visit_stmt(p, v.body, .Proc)))
 		} else {
 			document = cons_with_nopl(document, text("---"))
+		}
+
+		// A flat parent, such as an aligned composite literal field, only measures the first group after a
+		// newline, which is the signature. With parameters, breaking them first stays the layout. Without any,
+		// the signature has nothing useful to break, so group the literal and let the body break instead.
+		if len(v.type.params.list) == 0 {
+			document = group(document)
 		}
 	case ^ast.Scope_Exit:
 		document = visit_scope_exit_contract(p, v)
@@ -2347,6 +2384,7 @@ visit_proc_type :: proc(
 	proc_type: ast.Proc_Type,
 	contains_body: bool,
 	contains_where_clauses: bool,
+	break_empty_params := true,
 ) -> ^Document {
 	document := text("lambda") if proc_type.is_lambda else text("proc")
 
@@ -2383,7 +2421,11 @@ visit_proc_type :: proc(
 			),
 		),
 	)
-	document = cons(document, break_with(""), text(")"))
+	document = cons(
+		document,
+		len(proc_type.params.list) > 0 || break_empty_params ? break_with("") : empty(),
+		text(")"),
+	)
 
 	if proc_type.results != nil && len(proc_type.results.list) > 0 {
 		document = cons_with_nopl(document, text("-"))
@@ -2423,7 +2465,8 @@ visit_proc_type :: proc(
 		if use_parens {
 			document = cons_with_nopl(document, results_parens)
 		} else {
-			results_no_parens := nest(group(visit_signature_list(p, proc_type.results, contains_body, true)))
+			// A bare result type cannot take a trailing comma, so it must never get the broken-list comma.
+			results_no_parens := nest(group(visit_signature_list(p, proc_type.results, false, true)))
 			if can_multiline_single {
 				document = cons_with_nopl(document, if_break_or_document(results_parens, results_no_parens))
 			} else {
